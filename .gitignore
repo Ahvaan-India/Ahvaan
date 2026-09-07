@@ -1,0 +1,6 @@
+.env
+.env.*
+.neon
+
+node_modules/
+data/
