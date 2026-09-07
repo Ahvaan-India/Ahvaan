@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* shadcn theme tokens */
+@layer base {
+  :root {
+    --background: 210 20% 97%;
+    --foreground: 222 30% 10%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 30% 10%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 30% 10%;
+    --primary: 221 83% 53%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 20% 94%;
+    --secondary-foreground: 222 30% 18%;
+    --muted: 210 20% 94%;
+    --muted-foreground: 220 10% 42%;
+    --accent: 210 20% 94%;
+    --accent-foreground: 222 30% 18%;
+    --destructive: 0 72% 45%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 14% 89%;
+    --input: 220 14% 89%;
+    --ring: 221 83% 53%;
+    --radius: 0.375rem;
+    --map-bg: 210 20% 95%;
+    --cat-LOW-bg: 140 45% 92%;
+    --cat-LOW-fg: 140 60% 28%;
+    --cat-MODERATE-bg: 45 100% 90%;
+    --cat-MODERATE-fg: 38 100% 28%;
+    --cat-HIGH-bg: 24 100% 92%;
+    --cat-HIGH-fg: 24 100% 36%;
+    --cat-VERY_HIGH-bg: 0 80% 93%;
+    --cat-VERY_HIGH-fg: 0 70% 36%;
+  }
+  [data-theme="dark"],
+  .dark {
+    --background: 222 28% 7%;
+    --foreground: 210 20% 92%;
+    --card: 222 24% 10%;
+    --card-foreground: 210 20% 92%;
+    --popover: 222 24% 10%;
+    --popover-foreground: 210 20% 92%;
+    --primary: 217 91% 65%;
+    --primary-foreground: 222 30% 10%;
+    --secondary: 222 20% 15%;
+    --secondary-foreground: 210 20% 92%;
+    --muted: 222 20% 15%;
+    --muted-foreground: 215 12% 64%;
+    --accent: 222 20% 15%;
+    --accent-foreground: 210 20% 92%;
+    --destructive: 0 70% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 222 16% 20%;
+    --input: 222 16% 20%;
+    --ring: 217 91% 65%;
+    --map-bg: 222 24% 9%;
+    --cat-LOW-bg: 140 40% 16%;
+    --cat-LOW-fg: 140 55% 72%;
+    --cat-MODERATE-bg: 45 80% 16%;
+    --cat-MODERATE-fg: 45 100% 72%;
+    --cat-HIGH-bg: 24 85% 17%;
+    --cat-HIGH-fg: 24 100% 70%;
+    --cat-VERY_HIGH-bg: 0 70% 18%;
+    --cat-VERY_HIGH-fg: 0 85% 72%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans), "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    /* Instrument panel: tabular figures everywhere so numeric columns align. */
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Ward map + category tints (small custom layer on top of shadcn) */
+@layer components {
+  .map-wrap svg {
+    width: 100%;
+    height: auto;
+    display: block;
+    background: hsl(var(--map-bg));
+    border: 1px solid hsl(var(--border));
+    border-radius: var(--radius);
+  }
+  .map-wrap polygon {
+    transition: fill 0.15s ease;
+  }
+  .fcard.LOW { background: hsl(var(--cat-LOW-bg)); }
+  .fcard.MODERATE { background: hsl(var(--cat-MODERATE-bg)); }
+  .fcard.HIGH { background: hsl(var(--cat-HIGH-bg)); }
+  .fcard.VERY_HIGH { background: hsl(var(--cat-VERY_HIGH-bg)); }
+  .catfg.LOW { color: hsl(var(--cat-LOW-fg)); }
+  .catfg.MODERATE { color: hsl(var(--cat-MODERATE-fg)); }
+  .catfg.HIGH { color: hsl(var(--cat-HIGH-fg)); }
+  .catfg.VERY_HIGH { color: hsl(var(--cat-VERY_HIGH-fg)); }
+}
