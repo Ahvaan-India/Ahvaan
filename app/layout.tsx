@@ -10,8 +10,8 @@ const archivo = Archivo({
 });
 
 export const metadata: Metadata = {
-  title: "HeatWatch Kolkata — Ahvaan",
-  description: "Municipal heat-risk command center for Kolkata",
+  title: "Ahvaan",
+  description: "Ahvaan — Kolkata heat-risk command center",
 };
 
 export default function RootLayout({

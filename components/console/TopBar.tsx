@@ -1,20 +1,30 @@
 "use client";
 
-import { Bell, LayoutDashboard, BarChart3, Map, Clock } from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  Bell,
+  LayoutDashboard,
+  BarChart3,
+  Map,
+  Search,
+  Flame,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { WardClock } from "@/components/WardClock";
+import { getWardDisplayName, getWardLocality, matchesWardQuery } from "@/lib/geo/wardNames";
+import { cn } from "@/lib/utils";
+import { useState, useMemo } from "react";
 
 const NAV = [
-  { href: "#overview", label: "Overview", icon: LayoutDashboard },
-  { href: "#alerts", label: "Alerts", icon: Bell },
-  { href: "#trajectory", label: "Analytics", icon: BarChart3 },
-  { href: "#telemetry", label: "Wards", icon: Map },
+  { label: "Map", icon: Map, href: "/", isMap: true },
+  { label: "Analytics", icon: BarChart3, href: "#analytics", action: "analytics" as const },
 ];
 
 /**
- * Top Navbar: Brand logo + Section Navigation + Watch Badge & Sync Status + Ward Clock + Theme Toggle + WhatsApp Action.
- * Cleanly aligned with Flexbox, fixed height, responsive breakpoints, and no line wraps.
+ * Clean, minimal navbar — single 56px bar, no double rows.
+ * Center search (map page) is Google-Maps-like, with clear action.
  */
 export function TopBar({
   watchLabel,
@@ -22,110 +32,221 @@ export function TopBar({
   syncDetail,
   timezone,
   onSendAlert,
+  searchQuery,
+  onSearchChange,
+  onAnalyticsOpen,
+  wards,
+  onSelectWard,
 }: {
   watchLabel: string;
   syncedAt: string | null;
   syncDetail: string | null;
   timezone: string;
   onSendAlert: () => void;
+  searchQuery?: string;
+  onSearchChange?: (v: string) => void;
+  onAnalyticsOpen?: () => void;
+  wards?: Array<{ ward: number | null; wardName: string | null; wardId: number }>;
+  onSelectWard?: (wardId: number) => void;
 }) {
+  const pathname = usePathname();
+  const isMap = pathname === "/";
+  const [focused, setFocused] = useState(false);
+
+  const suggestions = useMemo(() => {
+    if (!wards || !searchQuery?.trim()) return [];
+    const q = searchQuery.trim();
+    return wards
+      .filter((w) => matchesWardQuery(w.ward, w.wardName, getWardLocality(w.ward), q))
+      .slice(0, 8);
+  }, [wards, searchQuery]);
+  const showDropdown = focused && suggestions.length > 0 && isMap;
+
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-border/80 bg-background/95 backdrop-blur-md transition-colors">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8 gap-4">
-        {/* Left Section: Brand Logo & Main Navigation */}
-        <div className="flex items-center gap-4 sm:gap-6">
-          <a
-            href="#"
-            className="flex items-center gap-2 text-base font-extrabold tracking-tight text-foreground hover:opacity-90 transition-opacity"
-          >
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-600 text-white font-black text-sm shadow-sm">
-              HW
+    <header className="sticky top-0 z-40 w-full border-b bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+      <div className="mx-auto flex h-[56px] max-w-[1600px] items-center gap-3 px-3 sm:px-4 lg:px-6">
+        {/* Brand */}
+        <Link
+          href="/"
+          className="flex shrink-0 items-center gap-2.5 transition-opacity hover:opacity-80"
+        >
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-red-600 to-orange-500 text-white shadow-sm">
+            <Flame className="h-4 w-4" />
+          </span>
+          <span className="hidden sm:flex flex-col leading-none">
+            <span className="text-[14px] font-extrabold tracking-tight">
+              Ahvaan
             </span>
-            <span className="flex items-center gap-1.5">
-              <span>HeatWatch</span>
-              <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-bold text-red-600 dark:text-red-400 border border-red-500/20">
-                Kolkata
-              </span>
+            <span className="text-[10px] font-semibold tracking-widest text-muted-foreground">
+              KOLKATA
             </span>
-          </a>
+          </span>
+        </Link>
 
-          <div className="hidden md:block h-4 w-[1px] bg-border" />
+        <div className="hidden h-6 w-px bg-border sm:block" />
 
-          {/* Desktop Section Links */}
-          <nav className="hidden md:flex items-center gap-1" aria-label="Sections">
-            {NAV.map((n) => (
-              <a
+        {/* Nav pills — Map link + Analytics popup trigger */}
+        <nav className="flex items-center gap-1">
+          {NAV.map((n) => {
+            const isAnalytics = "action" in n;
+            if (isAnalytics) {
+              return (
+                <button
+                  key={n.label}
+                  onClick={onAnalyticsOpen}
+                  className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <n.icon className="h-3.5 w-3.5" />
+                  {n.label}
+                </button>
+              );
+            }
+            return (
+              <Link
                 key={n.label}
                 href={n.href}
-                className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
               >
-                <n.icon className="h-3.5 w-3.5" aria-hidden />
-                <span>{n.label}</span>
-              </a>
-            ))}
-          </nav>
-        </div>
+                <n.icon className="h-3.5 w-3.5" />
+                {n.label}
+              </Link>
+            );
+          })}
+        </nav>
 
-        {/* Center Section: Watch Level Badge & Live Sync Status (Visible on larger screens) */}
-        <div className="hidden lg:flex items-center gap-3 rounded-full border border-border/60 bg-muted/30 px-3 py-1 text-xs">
-          <span className="rounded-full bg-orange-600 px-2 py-0.5 text-[10px] font-bold text-white uppercase tracking-wider">
-            {watchLabel}
-          </span>
-          <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        {/* Center search — only on map page, like Google Maps */}
+        {isMap && onSearchChange && (
+          <div className="mx-2 hidden max-w-md flex-1 items-center md:flex lg:mx-6">
+            <div className="relative flex w-full items-center">
+              <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
+              <input
+                value={searchQuery ?? ""}
+                onChange={(e) => onSearchChange(e.target.value)}
+                onFocus={() => setFocused(true)}
+                onBlur={() => setTimeout(() => setFocused(false), 180)}
+                placeholder="Search ward or locality (e.g. 42 · Naktala, Burrabazar)…"
+                className="h-9 w-full rounded-full border bg-muted/40 py-2 pl-9 pr-9 text-sm placeholder:text-muted-foreground focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              {searchQuery ? (
+                <button
+                  onClick={() => onSearchChange("")}
+                  className="absolute right-2 flex h-6 w-6 items-center justify-center rounded-full hover:bg-muted"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+              {showDropdown && (
+                <div className="absolute left-0 right-0 top-[44px] z-30 max-h-[320px] overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
+                  {suggestions.map((w) => {
+                    const loc = getWardLocality(w.ward);
+                    return (
+                      <button
+                        key={w.wardId}
+                        onMouseDown={(e) => { e.preventDefault(); onSelectWard?.(w.wardId); setFocused(false); }}
+                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent"
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
+                          {w.ward ?? "·"}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="block text-sm font-semibold leading-none">{getWardDisplayName(w.ward, w.wardName)}</span>
+                          {loc && <span className="block text-xs text-muted-foreground">{loc}</span>}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Right cluster */}
+        <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
+          <div className="hidden items-center gap-2 xl:flex">
+            <span className="rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
+              {watchLabel}
             </span>
-            <span>
-              {syncedAt
-                ? `Updated ${new Date(syncedAt).toLocaleTimeString("en-IN", {
+            {syncedAt && (
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
+                <span className="tabular-nums hidden lg:inline">
+                  {new Date(syncedAt).toLocaleTimeString("en-IN", {
                     timeZone: timezone,
                     hour: "2-digit",
                     minute: "2-digit",
-                  })}`
-                : "Syncing…"}
-            </span>
-          </span>
-          {syncDetail && <span className="tabular-nums text-muted-foreground/80">({syncDetail})</span>}
-        </div>
-
-        {/* Right Section: Ward Clock, Theme Toggle & WhatsApp Action */}
-        <div className="flex items-center gap-2.5">
-          {/* Live Ward Clock */}
-          <div className="hidden sm:flex items-center gap-1.5 rounded-lg border border-border/80 bg-muted/40 px-2.5 py-1.5 text-xs font-mono tabular-nums text-muted-foreground shadow-xs">
-            <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" aria-hidden />
-            <WardClock timeZone={timezone} />
+                  })}
+                </span>
+                {syncDetail && (
+                  <span className="tabular-nums text-muted-foreground/70">
+                    · {syncDetail}
+                  </span>
+                )}
+              </span>
+            )}
           </div>
 
-          {/* Theme Mode Switcher */}
           <ThemeToggle />
 
-          {/* WhatsApp Alert Button */}
           <Button
             onClick={onSendAlert}
             size="sm"
-            className="bg-red-600 hover:bg-red-700 text-white font-semibold flex items-center gap-2 shadow-xs rounded-lg h-9 px-3.5 transition-transform active:scale-95"
+            className="h-9 rounded-full bg-red-600 px-3.5 text-xs font-bold text-white shadow-sm hover:bg-red-700 sm:px-4 sm:text-sm"
           >
             <Bell className="h-4 w-4" />
-            <span className="hidden sm:inline">Send WhatsApp Alert</span>
+            <span className="hidden sm:inline">Send Alert</span>
             <span className="sm:hidden">Alert</span>
           </Button>
         </div>
       </div>
 
-      {/* Mobile Sub-Navigation Bar (visible below header on small screens) */}
-      <div className="flex md:hidden items-center justify-around border-t border-border/60 bg-background/80 px-2 py-1.5">
-        {NAV.map((n) => (
-          <a
-            key={n.label}
-            href={n.href}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-          >
-            <n.icon className="h-3.5 w-3.5" aria-hidden />
-            <span>{n.label}</span>
-          </a>
-        ))}
-      </div>
+       {/* Mobile search row — only when on map */}
+      {isMap && onSearchChange && (
+        <div className="border-t bg-card px-3 py-2 md:hidden">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={searchQuery ?? ""}
+              onChange={(e) => onSearchChange(e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setTimeout(() => setFocused(false), 180)}
+              placeholder="Search ward or locality…"
+              className="h-9 w-full rounded-full border bg-muted/40 py-2 pl-9 pr-9 text-sm focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => onSearchChange("")}
+                className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full hover:bg-muted"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {showDropdown && (
+              <div className="absolute left-0 right-0 top-[44px] z-30 max-h-[300px] overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
+                {suggestions.map((w) => {
+                  const loc = getWardLocality(w.ward);
+                  return (
+                    <button
+                      key={w.wardId}
+                      onMouseDown={(e) => { e.preventDefault(); onSelectWard?.(w.wardId); setFocused(false); }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent"
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
+                        {w.ward ?? "·"}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold leading-none">{getWardDisplayName(w.ward, w.wardName)}</span>
+                        {loc && <span className="block text-xs text-muted-foreground">{loc}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

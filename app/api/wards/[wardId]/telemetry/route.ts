@@ -23,8 +23,8 @@ import {
 import { timezoneForLocation } from "@/lib/geo/timezone";
 import { VULNERABILITY_DEFAULTS } from "@/lib/heatshield/config";
 import { getDb } from "@/lib/db";
-import { wardSnapshotsTable } from "@/lib/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { wardSnapshotsTable, weatherTable } from "@/lib/db/schema";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -80,7 +80,40 @@ export async function GET(_req: Request, { params }: RouteParams) {
     const realFeel = num(latestWx?.apparentTemperature);
     const humidity = num(latestWx?.relativeHumidity2m);
     const wind = num(latestWx?.windSpeed10m);
-    const solar = num(latestWx?.shortwaveRadiation);
+    // Solar: latest hour is 0 at night, so show the 24h daytime peak for planning.
+    // We keep the latest value for the delta, but display the max.
+    let solar: number | null = null;
+    let priorSolarForDelta: number | null = null;
+    try {
+      const since24h = new Date(Date.now() - 24 * 3_600_000);
+      const maxRows = await db
+        .select({ maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})` })
+        .from(weatherTable)
+        .where(and(eq(weatherTable.locationId, wardId), gte(weatherTable.timestamp, since24h)));
+      const maxVal = maxRows[0]?.maxSolar;
+      solar = typeof maxVal === "number" && Number.isFinite(maxVal) ? maxVal : num(latestWx?.shortwaveRadiation);
+      // Prior 24h window for delta (so night vs night doesn't show flat)
+      const since48h = new Date(Date.now() - 48 * 3_600_000);
+      const until24h = new Date(Date.now() - 24 * 3_600_000);
+      const priorMaxRows = await db
+        .select({ maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})` })
+        .from(weatherTable)
+        .where(
+          and(
+            eq(weatherTable.locationId, wardId),
+            gte(weatherTable.timestamp, since48h),
+            lte(weatherTable.timestamp, until24h),
+          ),
+        );
+      const priorMaxVal = priorMaxRows[0]?.maxSolar;
+      priorSolarForDelta = typeof priorMaxVal === "number" && Number.isFinite(priorMaxVal) ? priorMaxVal : num(priorWx?.shortwaveRadiation);
+    } catch {
+      solar = num(latestWx?.shortwaveRadiation);
+      priorSolarForDelta = num(priorWx?.shortwaveRadiation);
+    }
+    // Fallback to latest if no 24h window (e.g. no rows in last 24h but older rows exist)
+    if (solar === null) solar = num(latestWx?.shortwaveRadiation);
+    if (priorSolarForDelta === null) priorSolarForDelta = num(priorWx?.shortwaveRadiation);
 
     const macro = {
       temp,
@@ -99,7 +132,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
         temp: deltaDir(temp ?? NaN, num(priorWx?.temperature2m)),
         humidity: deltaDir(humidity ?? NaN, num(priorWx?.relativeHumidity2m)),
         wind: deltaDir(wind ?? NaN, num(priorWx?.windSpeed10m)),
-        solar: deltaDir(solar ?? NaN, num(priorWx?.shortwaveRadiation)),
+        solar: deltaDir(solar ?? NaN, priorSolarForDelta ?? NaN),
       },
     };
 

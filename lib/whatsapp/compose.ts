@@ -49,7 +49,7 @@ export function composeAlertMessage(ctx: AlertContext, timeZone: string): string
   const start = fmtHour(ctx.peakWindowStart, timeZone);
   const end = fmtHour(ctx.peakWindowEnd, timeZone);
   const lines = [
-    `${emoji} HeatWatch Kolkata — ${sev} Alert`,
+    `${emoji} Ahvaan — ${sev} Alert`,
     `${wardLine}${name}`,
   ];
   if (start && end) lines.push(`Peak heat window: ${start}–${end} (${timeZone})`);
