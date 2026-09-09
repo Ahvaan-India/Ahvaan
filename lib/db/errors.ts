@@ -1,6 +1,6 @@
 /**
  * Typed error for "location exists but has no usable data in the window".
- * The API layer maps this to 422 (insufficient/partial data), NOT 500 —
+ * The API layer maps this to 422 (insufficient/partial data), NOT 500
  * a silent garbage score is worse than an explicit gap.
  */
 export class DataGapError extends Error {

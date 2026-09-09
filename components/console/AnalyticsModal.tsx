@@ -11,23 +11,50 @@ import { cn } from "@/lib/utils";
 interface Props {
   open: boolean;
   onClose: () => void;
-  summary: { active: number; extreme: number; high: number; moderate: number; wards: number; metroHeatLoad: number } | null;
-  wards: Array<{ ward: number | null; wardId: number; riskScore: number | null; category: string | null; wbgt: number | null; population: number | null; exposure?: number | null; vulnerability?: number | null; thermal?: number | null }>;
+  summary: {
+    active: number;
+    extreme: number;
+    high: number;
+    moderate: number;
+    wards: number;
+    metroHeatLoad: number;
+  } | null;
+  wards: Array<{
+    ward: number | null;
+    wardId: number;
+    riskScore: number | null;
+    category: string | null;
+    wbgt: number | null;
+    population: number | null;
+    exposure?: number | null;
+    vulnerability?: number | null;
+    thermal?: number | null;
+  }>;
   selectedWardId: number | null;
   selectedWard: number | null;
 }
 
-export function AnalyticsModal({ open, onClose, summary, wards, selectedWardId, selectedWard }: Props) {
+export function AnalyticsModal({
+  open,
+  onClose,
+  summary,
+  wards,
+  selectedWardId,
+  selectedWard,
+}: Props) {
   const [tab, setTab] = useState<"city" | "ward">("city");
   // ESC to close + lock body scroll while open + force Recharts resize on mobile
   useEffect(() => {
     if (!open) return;
     // When a ward is selected, default to ward tab for faster deep-dive
     if (selectedWardId) setTab("ward");
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
     window.addEventListener("keydown", onKey);
     const prevOverflow = document.body.style.overflow;
-    const prevTouch = (document.body.style as unknown as Record<string, string>).webkitOverflowScrolling;
+    const prevTouch = (document.body.style as unknown as Record<string, string>)
+      .webkitOverflowScrolling;
     document.body.style.overflow = "hidden";
     // Fix for iOS: prevent background scroll
     document.documentElement.style.overflow = "hidden";
@@ -66,11 +93,37 @@ export function AnalyticsModal({ open, onClose, summary, wards, selectedWardId, 
               <div className="min-w-0">
                 <h2 className="text-base font-extrabold">Visual Analysis</h2>
                 <div className="mt-1 flex gap-1">
-                  <button onClick={() => setTab("city")} className={cn("rounded-full px-3 py-1 text-xs font-semibold", tab === "city" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-accent")}>Full — City</button>
-                  <button onClick={() => setTab("ward")} className={cn("rounded-full px-3 py-1 text-xs font-semibold", tab === "ward" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground hover:bg-accent")}>Ward</button>
+                  <button
+                    onClick={() => setTab("city")}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-semibold",
+                      tab === "city"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-accent",
+                    )}
+                  >
+                    Full City
+                  </button>
+                  <button
+                    onClick={() => setTab("ward")}
+                    className={cn(
+                      "rounded-full px-3 py-1 text-xs font-semibold",
+                      tab === "ward"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-accent",
+                    )}
+                  >
+                    Ward
+                  </button>
                 </div>
               </div>
-              <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close analytics" className="h-11 w-11 shrink-0 rounded-full sm:h-9 sm:w-9">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onClose}
+                aria-label="Close analytics"
+                className="h-11 w-11 shrink-0 rounded-full sm:h-9 sm:w-9"
+              >
                 <X className="h-5 w-5" />
               </Button>
             </div>

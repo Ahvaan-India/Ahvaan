@@ -10,7 +10,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/wards/summary — KPI row + watch level from the latest snapshot
+ * GET /api/wards/summary  KPI row + watch level from the latest snapshot
  * set. Deltas compare against the snapshot set as of 24h ago (null when no
  * history exists yet, e.g. right after the first refresh run).
  * Cached 20s server-side to avoid hammering snapshot history on每 refresh.
@@ -49,10 +49,15 @@ export async function GET() {
           const prevAt = Math.max(
             ...before.map((b) => +new Date(b.snapshot.computedAt!)),
           );
-          const spanH = Math.max(0, (+new Date(refreshedAt!) - prevAt) / 3_600_000);
-          deltaBasis = spanH >= 23 ? "24h" : spanH >= 1 ? `${Math.round(spanH)}h` : "<1h";
+          const spanH = Math.max(
+            0,
+            (+new Date(refreshedAt!) - prevAt) / 3_600_000,
+          );
+          deltaBasis =
+            spanH >= 23 ? "24h" : spanH >= 1 ? `${Math.round(spanH)}h` : "<1h";
           const c = (pred: (r: number, cat: string) => boolean) =>
-            before.filter((b) => pred(b.snapshot.risk, b.snapshot.category)).length;
+            before.filter((b) => pred(b.snapshot.risk, b.snapshot.category))
+              .length;
           deltas = {
             active: active - c((r) => r >= 0.5),
             extreme: extreme - c((_, cat) => cat === "VERY_HIGH"),
@@ -61,7 +66,7 @@ export async function GET() {
           };
         }
       } catch {
-        // deltas stay null — KPI counts are still valid
+        // deltas stay null  KPI counts are still valid
       }
 
       const totalRows = await getDb()
@@ -87,17 +92,22 @@ export async function GET() {
 
     if (!payload) {
       return NextResponse.json(
-        { error: "No snapshots yet — run npm run snapshots first" },
+        { error: "No snapshots yet  run npm run snapshots first" },
         { status: 422 },
       );
     }
 
     return NextResponse.json(payload, {
       status: 200,
-      headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=60" },
+      headers: {
+        "Cache-Control": "public, s-maxage=300, stale-while-revalidate=60",
+      },
     });
   } catch (err) {
     console.error("GET /api/wards/summary failed:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

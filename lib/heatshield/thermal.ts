@@ -1,10 +1,7 @@
-import {
-  THERMAL_NORMALIZATION_BOUNDS,
-  THERMAL_WEIGHTS,
-} from "./config";
+import { THERMAL_NORMALIZATION_BOUNDS, THERMAL_WEIGHTS } from "./config";
 
 /**
- * Thermal stress indicators. Pure functions — no I/O.
+ * Thermal stress indicators. Pure functions  no I/O.
  *
  * Sources:
  *  - Saturation vapour pressure: Magnus–Tetens approximation
@@ -51,7 +48,7 @@ export function wbgtApprox(Ta: number, RH: number): number {
  *  1. Convert to °F.
  *  2. If T < 80°F use the simple Steadman-derived linear blend.
  *  3. Else the 9-term Rothfusz regression.
- *  4. Low-RH/high-temp reduction; high-RH addition (NWS caveats — the
+ *  4. Low-RH/high-temp reduction; high-RH addition (NWS caveats  the
  *     source PDF only prints the base polynomial, these come from
  *     NWS SR 90-23 / weather.gov documentation).
  *  5. Convert back to °C.

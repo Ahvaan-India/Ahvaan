@@ -23,7 +23,11 @@ import { RISK_COLORS } from "@/components/map/KolkataMap";
 import { useIsMobile } from "@/lib/hooks/useMobile";
 import useSWR from "swr";
 
-const jsonFetchTrend = (u: string) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+const jsonFetchTrend = (u: string) =>
+  fetch(u).then((r) => {
+    if (!r.ok) throw new Error(String(r.status));
+    return r.json();
+  });
 
 interface Props {
   summary: {
@@ -339,15 +343,55 @@ export function AnalyticsView({ summary, wards }: Props) {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
-            <CardHeader className="pb-2"><CardTitle className="text-base">Exposure vs Vulnerability (wards)</CardTitle></CardHeader>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">
+                Exposure vs Vulnerability (wards)
+              </CardTitle>
+            </CardHeader>
             <CardContent className="h-[320px] w-full min-w-0 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <ScatterChart margin={{ left: 8, right: 12, top: 8, bottom: 8 }}>
+                <ScatterChart
+                  margin={{ left: 8, right: 12, top: 8, bottom: 8 }}
+                >
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis type="number" dataKey="exp" name="Exposure" domain={[0, 100]} tick={{ fontSize: 11 }} label={{ value: "Exposure →", position: "insideBottom", offset: -4, fontSize: 11 }} />
-                  <YAxis type="number" dataKey="vuln" name="Vulnerability" domain={[0, 100]} tick={{ fontSize: 11 }} width={40} />
+                  <XAxis
+                    type="number"
+                    dataKey="exp"
+                    name="Exposure"
+                    domain={[0, 100]}
+                    tick={{ fontSize: 11 }}
+                    label={{
+                      value: "Exposure →",
+                      position: "insideBottom",
+                      offset: -4,
+                      fontSize: 11,
+                    }}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="vuln"
+                    name="Vulnerability"
+                    domain={[0, 100]}
+                    tick={{ fontSize: 11 }}
+                    width={40}
+                  />
                   <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                  <Scatter data={valid.slice(0, 80).map((w) => ({ exp: w.exposure != null ? +(w.exposure * 100).toFixed(1) : 0, vuln: w.vulnerability != null ? +(w.vulnerability * 100).toFixed(1) : 0 }))} fill="#0ea5e9" isAnimationActive={chartAnim} />
+                  <Scatter
+                    data={valid
+                      .slice(0, 80)
+                      .map((w) => ({
+                        exp:
+                          w.exposure != null
+                            ? +(w.exposure * 100).toFixed(1)
+                            : 0,
+                        vuln:
+                          w.vulnerability != null
+                            ? +(w.vulnerability * 100).toFixed(1)
+                            : 0,
+                      }))}
+                    fill="#0ea5e9"
+                    isAnimationActive={chartAnim}
+                  />
                 </ScatterChart>
               </ResponsiveContainer>
             </CardContent>
@@ -355,15 +399,44 @@ export function AnalyticsView({ summary, wards }: Props) {
         </Item>
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
-            <CardHeader className="pb-2"><CardTitle className="text-base">Ward thermal distribution</CardTitle></CardHeader>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">
+                Ward thermal distribution
+              </CardTitle>
+            </CardHeader>
             <CardContent className="h-[320px] w-full min-w-0 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={Array.from({ length: 10 }, (_, i) => { const lo = i / 10, hi = (i + 1) / 10; return { bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`, count: valid.filter((w) => (w.thermal ?? 0) >= lo && (w.thermal ?? 0) < hi + (i === 9 ? 0.001 : 0)).length }; })}>
+                <BarChart
+                  data={Array.from({ length: 10 }, (_, i) => {
+                    const lo = i / 10,
+                      hi = (i + 1) / 10;
+                    return {
+                      bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`,
+                      count: valid.filter(
+                        (w) =>
+                          (w.thermal ?? 0) >= lo &&
+                          (w.thermal ?? 0) < hi + (i === 9 ? 0.001 : 0),
+                      ).length,
+                    };
+                  })}
+                >
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} interval={0} angle={-20} dy={10} height={40} />
+                  <XAxis
+                    dataKey="bucket"
+                    tick={{ fontSize: 10 }}
+                    interval={0}
+                    angle={-20}
+                    dy={10}
+                    height={40}
+                  />
                   <YAxis tick={{ fontSize: 11 }} width={30} />
                   <Tooltip />
-                  <Bar dataKey="count" fill="#06b6d4" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
+                  <Bar
+                    dataKey="count"
+                    fill="#06b6d4"
+                    radius={[4, 4, 0, 0]}
+                    isAnimationActive={chartAnim}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -375,21 +448,41 @@ export function AnalyticsView({ summary, wards }: Props) {
 }
 
 function CityTrend() {
-  const { data } = useSWR<{ days: Array<{ date: string; avgRisk: number }> }>("/api/wards/trend?days=7", jsonFetchTrend);
+  const { data } = useSWR<{ days: Array<{ date: string; avgRisk: number }> }>(
+    "/api/wards/trend?days=7",
+    jsonFetchTrend,
+  );
   const days = data?.days ?? [];
   if (days.length < 2) return null;
   return (
     <div className="min-w-0">
       <Card className="overflow-hidden">
-        <CardHeader className="pb-2"><CardTitle className="text-base">City mean risk — last 7 days</CardTitle></CardHeader>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">
+            City mean risk last 7 days
+          </CardTitle>
+        </CardHeader>
         <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-6">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={days.map((d) => ({ d: d.date.slice(5), risk: +(d.avgRisk * 100).toFixed(1) }))}>
+            <LineChart
+              data={days.map((d) => ({
+                d: d.date.slice(5),
+                risk: +(d.avgRisk * 100).toFixed(1),
+              }))}
+            >
               <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
               <XAxis dataKey="d" tick={{ fontSize: 11 }} />
               <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} width={40} />
               <Tooltip />
-              <Line type="monotone" dataKey="risk" name="Mean risk" dot stroke="#f97316" strokeWidth={2} isAnimationActive={false} />
+              <Line
+                type="monotone"
+                dataKey="risk"
+                name="Mean risk"
+                dot
+                stroke="#f97316"
+                strokeWidth={2}
+                isAnimationActive={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>

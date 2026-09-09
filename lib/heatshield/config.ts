@@ -1,5 +1,5 @@
 /**
- * Ahvaan — single source of truth for every engineering-choice constant.
+ * Ahvaan  single source of truth for every engineering-choice constant.
  *
  * The source spec leaves several values unspecified (normalization bounds,
  * persistence function shape, category cutoffs, vulnerability defaults).
@@ -9,12 +9,12 @@
  * and WHAT to change when better data arrives.
  */
 
-/** Fixed disclaimer — must be surfaced in the UI, not buried. */
+/** Fixed disclaimer  must be surfaced in the UI, not buried. */
 export const DISCLAIMER =
   "MVP decision-support index, not a validated clinical mortality prediction model. Score does not represent a statistical probability of an adverse outcome." as const;
 
 /** Science-engine version surfaced in RiskResponse.meta. */
-export const SCIENCE_ENGINE_VERSION = "0.3.0" as const;
+export const SCIENCE_ENGINE_VERSION = "0.4.0" as const;
 
 /** How many hourly weather rows a full 72h window should contain. */
 export const EXPECTED_WEATHER_ROWS = 72;
@@ -113,10 +113,10 @@ export const VULNERABILITY_WEIGHTS = {
  * matching flag into `dataQualityFlags` so it reaches the Confidence Score.
  *
  * - elderlyPct: national 60+ share ≈ 8–10% (SRS/Census). Use 0.09.
- * - informalHousingIndex: placeholder 0.30 (30% informal) — replace with
+ * - informalHousingIndex: placeholder 0.30 (30% informal)  replace with
  *   ward/slum survey data when available.
  * - noACShare: placeholder 0.85 (only ~15% household AC/cooler effective
- *   access) — replace with NSSO/state survey data when available.
+ *   access)  replace with NSSO/state survey data when available.
  */
 export const VULNERABILITY_DEFAULTS = {
   elderlyPct: 0.09,
@@ -130,6 +130,7 @@ export const VULNERABILITY_FLAGS = {
   acDefault: "ac_access_default",
   densityFallback: "density_population_proxy",
   utciUnavailable: "utci_unavailable",
+  utciEstimated: "utci_estimated",
   pressureMissing: "pressure_missing",
 } as const;
 

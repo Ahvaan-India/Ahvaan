@@ -4,7 +4,7 @@ import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
- * Parameter sub-card: one parameter per tile — label, big tabular value +
+ * Parameter sub-card: one parameter per tile  label, big tabular value +
  * unit, optional qualifier badge, fixed icon. Used by every parameter group
  * (popover, drivers, telemetry) so panels scan at a glance.
  */
@@ -39,10 +39,14 @@ export function SubCard({
         <span
           className={cn(
             "mt-1.5 inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold",
-            qualifierTone === "low" && "bg-teal-500/15 text-teal-700 dark:text-teal-300",
-            qualifierTone === "moderate" && "bg-yellow-500/20 text-yellow-800 dark:text-yellow-300",
-            qualifierTone === "high" && "bg-orange-500/20 text-orange-800 dark:text-orange-300",
-            qualifierTone === "extreme" && "bg-red-600/15 text-red-800 dark:text-red-300",
+            qualifierTone === "low" &&
+              "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+            qualifierTone === "moderate" &&
+              "bg-yellow-500/20 text-yellow-800 dark:text-yellow-300",
+            qualifierTone === "high" &&
+              "bg-orange-500/20 text-orange-800 dark:text-orange-300",
+            qualifierTone === "extreme" &&
+              "bg-red-600/15 text-red-800 dark:text-red-300",
             !qualifierTone && "bg-secondary text-secondary-foreground",
           )}
         >

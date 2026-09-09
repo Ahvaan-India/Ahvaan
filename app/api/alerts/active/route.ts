@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/alerts/active — live alert cards, highest risk first.
+ * GET /api/alerts/active  live alert cards, highest risk first.
  * Sourced from the alerts table (synced by scripts/refresh.ts from the
  * latest snapshots), joined with ward names + centroids for the UI.
  */
@@ -25,7 +25,9 @@ export async function GET() {
           long: r.long,
           severity: r.alert.severity,
           displaySeverity:
-            r.alert.severity === "EXTREME" ? "Extreme" : displayCategory("HIGH"),
+            r.alert.severity === "EXTREME"
+              ? "Extreme"
+              : displayCategory("HIGH"),
           riskScore: r.alert.riskScore,
           peakWindowStart: r.alert.peakWindowStart,
           peakWindowEnd: r.alert.peakWindowEnd,
@@ -36,11 +38,16 @@ export async function GET() {
       },
       {
         status: 200,
-        headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=60" },
+        headers: {
+          "Cache-Control": "public, s-maxage=120, stale-while-revalidate=60",
+        },
       },
     );
   } catch (err) {
     console.error("GET /api/alerts/active failed:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

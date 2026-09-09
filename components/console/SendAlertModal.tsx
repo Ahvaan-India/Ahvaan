@@ -56,7 +56,7 @@ function fmtHour(iso: string | null, timeZone: string): string | null {
 /**
  * Prototype bot-send flow. The OPERATOR never sends anything manually: they
  * pick the alert, tick which data blocks go out, and enter the USER's
- * WhatsApp number — the Ahvaan bot addresses that user. In this prototype
+ * WhatsApp number  the Ahvaan bot addresses that user. In this prototype
  * phase the send is simulated (logged as a bot initiation); real delivery
  * requires the WhatsApp Business Cloud API migration.
  */
@@ -86,7 +86,9 @@ export function SendAlertModal({
     outlook: true,
     advisory: true,
   });
-  const [status, setStatus] = useState<"idle" | "sending" | "queued" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "queued" | "error">(
+    "idle",
+  );
   const [deliveryId, setDeliveryId] = useState<number | null>(null);
   const [deliveryInfo, setDeliveryInfo] = useState<{
     waLink?: string;
@@ -113,8 +115,14 @@ export function SendAlertModal({
   const message = useMemo(() => {
     if (!selected) return "";
     const sev = selected.severity === "EXTREME" ? "EXTREME" : "HIGH";
-    const wardLine = selected.ward !== null ? `Ward ${selected.ward}` : `Location ${selected.wardId}`;
-    const lines = [`🤖 Ahvaan Heat Bot — ${sev} Alert`, `${wardLine}${selected.wardName ? ` · ${selected.wardName}` : ""}`];
+    const wardLine =
+      selected.ward !== null
+        ? `Ward ${selected.ward}`
+        : `Location ${selected.wardId}`;
+    const lines = [
+      `🤖 Ahvaan Heat Bot  ${sev} Alert`,
+      `${wardLine}${selected.wardName ? ` · ${selected.wardName}` : ""}`,
+    ];
     const start = fmtHour(selected.peakWindowStart, timezone);
     const end = fmtHour(selected.peakWindowEnd, timezone);
     if (start && end) lines.push(`Peak heat window: ${start}–${end} IST`);
@@ -122,13 +130,17 @@ export function SendAlertModal({
     if (blocks.summary) {
       const mort =
         telemetry?.risk &&
-        ` · Mortality ${computeMortalityIndex({
-          heatIndex: telemetry.risk.heatIndex,
-          nighttimeRecovery: telemetry.risk.recovery,
-          persistence: telemetry.risk.persistence,
-          vulnerability: telemetry.risk.vulnerability,
-        }).index}/100`;
-      lines.push(`Risk ${(selected.riskScore * 100).toFixed(0)}/100${mort ?? ""}`);
+        ` · Mortality ${
+          computeMortalityIndex({
+            heatIndex: telemetry.risk.heatIndex,
+            nighttimeRecovery: telemetry.risk.recovery,
+            persistence: telemetry.risk.persistence,
+            vulnerability: telemetry.risk.vulnerability,
+          }).index
+        }/100`;
+      lines.push(
+        `Risk ${(selected.riskScore * 100).toFixed(0)}/100${mort ?? ""}`,
+      );
     }
     if (blocks.indicators && telemetry) {
       const m = telemetry.macro;
@@ -162,8 +174,9 @@ export function SendAlertModal({
             .join(", "),
       );
     }
-    if (blocks.advisory && selected.advisoryText) lines.push(`Advisory: ${selected.advisoryText}`);
-    lines.push("— sent by Ahvaan bot");
+    if (blocks.advisory && selected.advisoryText)
+      lines.push(`Advisory: ${selected.advisoryText}`);
+    lines.push(" sent by Ahvaan bot");
     return lines.join("\n");
   }, [selected, blocks, telemetry, outlook, timezone]);
 
@@ -196,7 +209,8 @@ export function SendAlertModal({
         error?: string;
         note?: string;
       };
-      if (!res.ok && !data.id) throw new Error(data.error || "Failed to send WhatsApp alert");
+      if (!res.ok && !data.id)
+        throw new Error(data.error || "Failed to send WhatsApp alert");
       setDeliveryId(data.id || null);
       setDeliveryInfo({
         waLink: data.waLink,
@@ -207,7 +221,8 @@ export function SendAlertModal({
       setStatus("queued");
     } catch (err) {
       setDeliveryInfo({
-        errorText: err instanceof Error ? err.message : "Failed to queue WhatsApp alert",
+        errorText:
+          err instanceof Error ? err.message : "Failed to queue WhatsApp alert",
       });
       setStatus("error");
     }
@@ -230,7 +245,12 @@ export function SendAlertModal({
           <CardTitle className="flex items-center gap-2 text-base">
             <Bot className="h-4 w-4" /> Send Alert via Avhaan Bot
           </CardTitle>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close"
+          >
             <X />
           </Button>
         </CardHeader>
@@ -246,11 +266,15 @@ export function SendAlertModal({
               inputMode="tel"
             />
             {!phoneValid && (
-              <span className="text-xs text-red-600">Include country code (10–15 digits).</span>
+              <span className="text-xs text-red-600">
+                Include country code (10–15 digits).
+              </span>
             )}
           </label>
           <label className="block text-sm">
-            <span className="mb-1 block text-muted-foreground">Alert context</span>
+            <span className="mb-1 block text-muted-foreground">
+              Alert context
+            </span>
             <select
               value={selected?.id ?? ""}
               onChange={(e) => setAlertId(Number(e.target.value))}
@@ -258,17 +282,23 @@ export function SendAlertModal({
             >
               {alerts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  [{a.severity}] {a.ward !== null ? `Ward ${a.ward}` : `Loc ${a.wardId}`} — risk{" "}
+                  [{a.severity}]{" "}
+                  {a.ward !== null ? `Ward ${a.ward}` : `Loc ${a.wardId}`} risk{" "}
                   {(a.riskScore * 100).toFixed(0)}
                 </option>
               ))}
             </select>
           </label>
           <fieldset className="text-sm">
-            <legend className="mb-1 text-muted-foreground">Data blocks to send</legend>
+            <legend className="mb-1 text-muted-foreground">
+              Data blocks to send
+            </legend>
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
               {BLOCKS.map((b) => (
-                <label key={b.key} className="flex cursor-pointer items-center gap-2 rounded border border-border px-2 py-1.5">
+                <label
+                  key={b.key}
+                  className="flex cursor-pointer items-center gap-2 rounded border border-border px-2 py-1.5"
+                >
                   <input
                     type="checkbox"
                     checked={blocks[b.key]}
@@ -281,7 +311,9 @@ export function SendAlertModal({
             </div>
           </fieldset>
           <div className="text-sm">
-            <span className="mb-1 block text-muted-foreground">Bot message preview</span>
+            <span className="mb-1 block text-muted-foreground">
+              Bot message preview
+            </span>
             <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-secondary/40 p-2 font-mono text-xs">
               {message || "Select an alert to preview."}
             </pre>
@@ -292,23 +324,35 @@ export function SendAlertModal({
                 ✅ WhatsApp Alert Dispatched! (Log #{deliveryId ?? "N/A"})
               </p>
               <p className="mt-1 text-xs text-green-700 dark:text-green-300">
-                Status: <span className="font-mono">{deliveryInfo?.statusText || "SENT"}</span>
+                Status:{" "}
+                <span className="font-mono">
+                  {deliveryInfo?.statusText || "SENT"}
+                </span>
                 {deliveryInfo?.mode && ` via ${deliveryInfo.mode}`}
               </p>
-              {(deliveryInfo?.mode === "twilio" || deliveryInfo?.mode === "twilio_sandbox") && (
+              {(deliveryInfo?.mode === "twilio" ||
+                deliveryInfo?.mode === "twilio_sandbox") && (
                 <p className="mt-2 rounded border border-amber-200 bg-amber-50/80 p-2 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200">
                   💡 <strong>WhatsApp Delivery Guidance:</strong>
                   <br />
-                  1. If using Twilio Sandbox, send your join code (e.g. <code>join ...</code>) to your Twilio number on WhatsApp once to opt-in.
+                  1. If using Twilio Sandbox, send your join code (e.g.{" "}
+                  <code>join ...</code>) to your Twilio number on WhatsApp once
+                  to opt-in.
                   <br />
-                  2. If using standard Twilio messaging, send a message (e.g. <code>Hi</code>) to your Twilio number once to open the WhatsApp 24-hour delivery window.
+                  2. If using standard Twilio messaging, send a message (e.g.{" "}
+                  <code>Hi</code>) to your Twilio number once to open the
+                  WhatsApp 24-hour delivery window.
                   <br />
-                  3. Or click the link below to open and send directly via WhatsApp Web/App!
+                  3. Or click the link below to open and send directly via
+                  WhatsApp Web/App!
                 </p>
               )}
               {deliveryInfo?.mode === "simulated" && (
                 <p className="mt-2 rounded border border-blue-200 bg-blue-50/80 p-2 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/40 dark:text-blue-200">
-                  ℹ️ <strong>Simulated Prototype Send:</strong> Paste your real 32-character <code>TWILIO_AUTH_TOKEN</code> in <code>.env</code> to send automated WhatsApp messages from your Twilio account, or click below to send via WhatsApp Web!
+                  ℹ️ <strong>Simulated Prototype Send:</strong> Paste your real
+                  32-character <code>TWILIO_AUTH_TOKEN</code> in{" "}
+                  <code>.env</code> to send automated WhatsApp messages from
+                  your Twilio account, or click below to send via WhatsApp Web!
                 </p>
               )}
               {deliveryInfo?.waLink && (
@@ -328,15 +372,23 @@ export function SendAlertModal({
           {status === "error" && (
             <div className="rounded border border-red-200 bg-red-50/50 p-2.5 text-sm dark:border-red-900/50 dark:bg-red-950/40">
               <p className="font-semibold text-red-800 dark:text-red-200">
-                ⚠️ Sending failed: {deliveryInfo?.errorText || "Check API configuration and retry."}
+                ⚠️ Sending failed:{" "}
+                {deliveryInfo?.errorText ||
+                  "Check API configuration and retry."}
               </p>
               {deliveryInfo?.errorText?.includes("verified recipient") && (
                 <div className="mt-2 rounded bg-red-100/80 p-2 text-xs text-red-900 dark:bg-red-900/30 dark:text-red-200">
                   💡 <strong>Twilio Trial Requirement:</strong>
-                  <br />
-                  • Option 1 (WhatsApp Sandbox): Set <code>TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886</code> in <code>.env</code> and send your join code to <code>+1 415 523 8886</code> on WhatsApp.
-                  <br />
-                  • Option 2 (Twilio Console): Go to <em>Twilio Console &gt; Phone Numbers &gt; Verified Caller IDs</em> and add your number (<code>+91 7903327991</code>).
+                  <br />• Option 1 (WhatsApp Sandbox): Set{" "}
+                  <code>
+                    TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
+                  </code> in <code>.env</code> and send your join code to{" "}
+                  <code>+1 415 523 8886</code> on WhatsApp.
+                  <br />• Option 2 (Twilio Console): Go to{" "}
+                  <em>
+                    Twilio Console &gt; Phone Numbers &gt; Verified Caller IDs
+                  </em>{" "}
+                  and add your number (<code>+91 7903327991</code>).
                 </div>
               )}
               {deliveryInfo?.waLink && (
@@ -354,7 +406,11 @@ export function SendAlertModal({
             </div>
           )}
           <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose} className="w-full sm:w-auto">
+            <Button
+              variant="outline"
+              onClick={onClose}
+              className="w-full sm:w-auto"
+            >
               Cancel
             </Button>
             <Button
@@ -362,7 +418,8 @@ export function SendAlertModal({
               disabled={!selected || !phoneValid || status === "sending"}
               className="w-full sm:w-auto bg-red-600 font-semibold text-white hover:bg-red-600/90"
             >
-              <Bot className="h-4 w-4" /> {status === "sending" ? "Sending Alert…" : "Send via Avhaan Bot"}
+              <Bot className="h-4 w-4" />{" "}
+              {status === "sending" ? "Sending Alert…" : "Send via Avhaan Bot"}
             </Button>
           </div>
         </CardContent>

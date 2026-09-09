@@ -65,10 +65,20 @@ function BroadcastHistory({
       aria-modal="true"
       aria-label="Broadcast history"
     >
-      <Card className="max-h-[85vh] w-full max-w-lg overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+      <Card
+        className="max-h-[85vh] w-full max-w-lg overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
         <CardHeader className="flex flex-row items-center justify-between pb-2">
-          <CardTitle className="text-base">Broadcast History — Alert #{alertId}</CardTitle>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close">
+          <CardTitle className="text-base">
+            Broadcast History Alert #{alertId}
+          </CardTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            aria-label="Close"
+          >
             <X />
           </Button>
         </CardHeader>
@@ -77,8 +87,8 @@ function BroadcastHistory({
             <Skeleton className="h-16 w-full" />
           ) : data.deliveries.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No sends logged for this alert yet. Use “Send Alert to WhatsApp” to
-              initiate one — initiation (not delivery) is what gets logged.
+              No sends logged for this alert yet. Use “Send Alert to WhatsApp”
+              to initiate one initiation (not delivery) is what gets logged.
             </p>
           ) : (
             <table className="w-full text-sm">
@@ -96,8 +106,10 @@ function BroadcastHistory({
                     <td className="py-1.5 pr-2 tabular-nums">
                       {new Date(d.sentAt).toLocaleString("en-IN")}
                     </td>
-                    <td className="py-1.5 pr-2 tabular-nums">{d.recipientPhone ?? "—"}</td>
-                    <td className="py-1.5 pr-2">{d.sentBy ?? "—"}</td>
+                    <td className="py-1.5 pr-2 tabular-nums">
+                      {d.recipientPhone ?? ""}
+                    </td>
+                    <td className="py-1.5 pr-2">{d.sentBy ?? ""}</td>
                     <td className="py-1.5">
                       <span
                         className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium uppercase ${
@@ -152,8 +164,8 @@ export function AlertsList({
     return (
       <Card>
         <CardContent className="pt-5 text-sm text-muted-foreground">
-          No active alerts. Wards at or above HIGH risk will appear here after the
-          next snapshot refresh.
+          No active alerts. Wards at or above HIGH risk will appear here after
+          the next snapshot refresh.
         </CardContent>
       </Card>
     );
@@ -164,7 +176,10 @@ export function AlertsList({
       {alerts.map((a) => (
         <Card key={a.id}>
           <CardContent className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-4">
-            <RiskBadge category={a.severity} label={a.displaySeverity.toUpperCase()} />
+            <RiskBadge
+              category={a.severity}
+              label={a.displaySeverity.toUpperCase()}
+            />
             <button
               className="text-sm font-semibold hover:underline"
               onClick={() => onSelectWard(a.wardId)}
@@ -179,14 +194,21 @@ export function AlertsList({
               {peakLabel(a, timezone)}
             </span>
             <span className="w-full text-sm">{a.advisoryText}</span>
-            <Button variant="ghost" size="sm" onClick={() => setHistoryFor(a.id)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setHistoryFor(a.id)}
+            >
               <History /> View Broadcast History
             </Button>
           </CardContent>
         </Card>
       ))}
       {historyFor !== null && (
-        <BroadcastHistory alertId={historyFor} onClose={() => setHistoryFor(null)} />
+        <BroadcastHistory
+          alertId={historyFor}
+          onClose={() => setHistoryFor(null)}
+        />
       )}
     </div>
   );

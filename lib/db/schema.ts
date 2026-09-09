@@ -11,7 +11,7 @@ import {
 import { relations } from "drizzle-orm";
 
 /**
- * Ahvaan — Drizzle schema.
+ * Ahvaan  Drizzle schema.
  *
  * Three tables keyed by locationId -> locations.id:
  *  - locations:  one row per modelled cell / point
@@ -85,16 +85,12 @@ export const populationTable = pgTable(
     mainWorkers: integer("mainWorkers"),
     mainCultivators: integer("mainCultivators"),
     mainAgriculturalLabourers: integer("mainAgriculturalLabourers"),
-    mainHouseholdIndustryWorkers: integer(
-      "mainHouseholdIndustryWorkers",
-    ),
+    mainHouseholdIndustryWorkers: integer("mainHouseholdIndustryWorkers"),
     mainOtherWorkers: integer("mainOtherWorkers"),
     // Marginal worker totals (present in live DB)
     marginalWorkers: integer("marginalWorkers"),
     marginalCultivators: integer("marginalCultivators"),
-    marginalAgriculturalLabourers: integer(
-      "marginalAgriculturalLabourers",
-    ),
+    marginalAgriculturalLabourers: integer("marginalAgriculturalLabourers"),
     marginalHouseholdIndustryWorkers: integer(
       "marginalHouseholdIndustryWorkers",
     ),
@@ -165,10 +161,14 @@ export const alertsTable = pgTable(
       .references(() => locationsTable.id, { onDelete: "cascade" }),
     severity: varchar("severity", { length: 20 }).notNull(), // HIGH | EXTREME
     riskScore: doublePrecision("riskScore").notNull(),
-    peakWindowStart: timestamp("peakWindowStart", { withTimezone: true }).notNull(),
+    peakWindowStart: timestamp("peakWindowStart", {
+      withTimezone: true,
+    }).notNull(),
     peakWindowEnd: timestamp("peakWindowEnd", { withTimezone: true }).notNull(),
     advisoryText: varchar("advisoryText", { length: 500 }),
-    triggeredAt: timestamp("triggeredAt", { withTimezone: true }).notNull().defaultNow(),
+    triggeredAt: timestamp("triggeredAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
     status: varchar("status", { length: 20 }).notNull().default("active"), // active | resolved
   },
   (t) => [index("alerts_ward_status_idx").on(t.wardId, t.status)],
@@ -176,7 +176,7 @@ export const alertsTable = pgTable(
 
 /**
  * Audit log for the WhatsApp prototype button. Logs INITIATION (operator
- * clicked send and opened wa.me), not delivery confirmation — the Click to
+ * clicked send and opened wa.me), not delivery confirmation  the Click to
  * Chat deep link gives no callback. `status` is forward-compatible with a
  * future Business Cloud API migration (sent/delivered/read/failed).
  */
@@ -214,8 +214,11 @@ export const wardSnapshotsTable = pgTable(
     recovery: doublePrecision("recovery").notNull(),
     wbgt: doublePrecision("wbgt").notNull(),
     heatIndex: doublePrecision("heatIndex").notNull(),
+    utci: doublePrecision("utci"),
     confidence: doublePrecision("confidence").notNull(),
-    computedAt: timestamp("computedAt", { withTimezone: true }).notNull().defaultNow(),
+    computedAt: timestamp("computedAt", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [index("snapshots_location_time_idx").on(t.locationId, t.computedAt)],
 );

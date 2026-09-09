@@ -74,7 +74,13 @@
   }
   body {
     @apply bg-background text-foreground;
-    font-family: var(--font-sans), "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-family:
+      var(--font-sans),
+      "Archivo",
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      sans-serif;
     /* Instrument panel: tabular figures everywhere so numeric columns align. */
     font-variant-numeric: tabular-nums;
   }
@@ -93,54 +99,58 @@
   .map-wrap polygon {
     transition: fill 0.15s ease;
   }
-  .fcard.LOW { background: hsl(var(--cat-LOW-bg)); }
-  .fcard.MODERATE { background: hsl(var(--cat-MODERATE-bg)); }
-  .fcard.HIGH { background: hsl(var(--cat-HIGH-bg)); }
-  .fcard.VERY_HIGH { background: hsl(var(--cat-VERY_HIGH-bg)); }
-  .catfg.LOW { color: hsl(var(--cat-LOW-fg)); }
-  .catfg.MODERATE { color: hsl(var(--cat-MODERATE-fg)); }
-  .catfg.HIGH { color: hsl(var(--cat-HIGH-fg)); }
-  .catfg.VERY_HIGH { color: hsl(var(--cat-VERY_HIGH-fg)); }
+  .fcard.LOW {
+    background: hsl(var(--cat-LOW-bg));
+  }
+  .fcard.MODERATE {
+    background: hsl(var(--cat-MODERATE-bg));
+  }
+  .fcard.HIGH {
+    background: hsl(var(--cat-HIGH-bg));
+  }
+  .fcard.VERY_HIGH {
+    background: hsl(var(--cat-VERY_HIGH-bg));
+  }
+  .catfg.LOW {
+    color: hsl(var(--cat-LOW-fg));
+  }
+  .catfg.MODERATE {
+    color: hsl(var(--cat-MODERATE-fg));
+  }
+  .catfg.HIGH {
+    color: hsl(var(--cat-HIGH-fg));
+  }
+  .catfg.VERY_HIGH {
+    color: hsl(var(--cat-VERY_HIGH-fg));
+  }
 }
 
-/* Better thin scrollbars — Visual Analysis + drawers */
+/* Polished thin scrollbars  map controls + ward popup + analytics */
 @layer utilities {
   .custom-scrollbar {
     scrollbar-width: thin;
-    scrollbar-color: hsl(var(--border)) transparent;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.2) transparent;
     scrollbar-gutter: stable;
   }
   .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 4px;
+    height: 4px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
+    margin: 4px 0;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
+    background: hsl(var(--muted-foreground) / 0.18);
     border-radius: 9999px;
-    border: 1px solid transparent;
-    background-clip: content-box;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.35);
-    background-clip: content-box;
+    background: hsl(var(--muted-foreground) / 0.32);
   }
   .custom-scrollbar::-webkit-scrollbar-thumb:active {
-    background: hsl(var(--muted-foreground) / 0.5);
-    background-clip: content-box;
+    background: hsl(var(--muted-foreground) / 0.45);
   }
-  /* Hide scrollbar until hover/scroll — cleaner for analytics popup */
-  .custom-scrollbar-hover::-webkit-scrollbar-thumb {
+  .custom-scrollbar::-webkit-scrollbar-corner {
     background: transparent;
-  }
-  .custom-scrollbar-hover:hover::-webkit-scrollbar-thumb {
-    background: hsl(var(--border));
-    background-clip: content-box;
-  }
-  .custom-scrollbar-hover:hover::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.35);
-    background-clip: content-box;
   }
 }

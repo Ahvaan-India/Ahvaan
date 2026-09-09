@@ -3,7 +3,7 @@ import { clip } from "./thermal";
 /**
  * Planning-proxy heat-mortality burden index (0–100).
  *
- * Heuristic composite — NOT fitted to mortality outcomes, NOT a clinical
+ * Heuristic composite  NOT fitted to mortality outcomes, NOT a clinical
  * prediction. It encodes textbook heat–health relationships so ops staff get
  * a single burden number next to the risk score:
  *  M = 100 * (0.35*hiSev + 0.25*nightSev + 0.20*persist + 0.20*vuln)
@@ -14,7 +14,12 @@ import { clip } from "./thermal";
  * Bands: <20 Minimal, <40 Moderate, <60 High, <80 Very high, ≥80 Extreme.
  */
 
-export type MortalityBand = "Minimal" | "Moderate" | "High" | "Very high" | "Extreme";
+export type MortalityBand =
+  | "Minimal"
+  | "Moderate"
+  | "High"
+  | "Very high"
+  | "Extreme";
 
 export const MORTALITY_WEIGHTS = {
   heatIndex: 0.35,
@@ -26,7 +31,10 @@ export const MORTALITY_WEIGHTS = {
 export const MORTALITY_HI_BAND = { min: 27, max: 54 } as const;
 
 export function heatIndexSeverity(heatIndexC: number): number {
-  return clip((heatIndexC - MORTALITY_HI_BAND.min) / (MORTALITY_HI_BAND.max - MORTALITY_HI_BAND.min));
+  return clip(
+    (heatIndexC - MORTALITY_HI_BAND.min) /
+      (MORTALITY_HI_BAND.max - MORTALITY_HI_BAND.min),
+  );
 }
 
 export function mortalityBand(index: number): MortalityBand {

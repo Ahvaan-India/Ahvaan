@@ -38,7 +38,7 @@ function num(v: unknown): number | null {
 }
 
 /**
- * GET /api/wards/[wardId]/telemetry — detail panel payload (wards 1:1
+ * GET /api/wards/[wardId]/telemetry  detail panel payload (wards 1:1
  * locations). Macro readings from the latest hourly row (+24h deltas),
  * demographic snapshot from census + engine components, event history
  * from the alerts table.
@@ -57,7 +57,10 @@ export async function GET(_req: Request, { params }: RouteParams) {
     const db = getDb();
     const location = await getLocationById(wardId);
     if (!location) {
-      return NextResponse.json({ error: "Ward not found", wardId }, { status: 404 });
+      return NextResponse.json(
+        { error: "Ward not found", wardId },
+        { status: 404 },
+      );
     }
     const population = await getLatestPopulation(wardId);
     if (!population) {
@@ -87,16 +90,28 @@ export async function GET(_req: Request, { params }: RouteParams) {
     try {
       const since24h = new Date(Date.now() - 24 * 3_600_000);
       const maxRows = await db
-        .select({ maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})` })
+        .select({
+          maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})`,
+        })
         .from(weatherTable)
-        .where(and(eq(weatherTable.locationId, wardId), gte(weatherTable.timestamp, since24h)));
+        .where(
+          and(
+            eq(weatherTable.locationId, wardId),
+            gte(weatherTable.timestamp, since24h),
+          ),
+        );
       const maxVal = maxRows[0]?.maxSolar;
-      solar = typeof maxVal === "number" && Number.isFinite(maxVal) ? maxVal : num(latestWx?.shortwaveRadiation);
+      solar =
+        typeof maxVal === "number" && Number.isFinite(maxVal)
+          ? maxVal
+          : num(latestWx?.shortwaveRadiation);
       // Prior 24h window for delta (so night vs night doesn't show flat)
       const since48h = new Date(Date.now() - 48 * 3_600_000);
       const until24h = new Date(Date.now() - 24 * 3_600_000);
       const priorMaxRows = await db
-        .select({ maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})` })
+        .select({
+          maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})`,
+        })
         .from(weatherTable)
         .where(
           and(
@@ -106,14 +121,18 @@ export async function GET(_req: Request, { params }: RouteParams) {
           ),
         );
       const priorMaxVal = priorMaxRows[0]?.maxSolar;
-      priorSolarForDelta = typeof priorMaxVal === "number" && Number.isFinite(priorMaxVal) ? priorMaxVal : num(priorWx?.shortwaveRadiation);
+      priorSolarForDelta =
+        typeof priorMaxVal === "number" && Number.isFinite(priorMaxVal)
+          ? priorMaxVal
+          : num(priorWx?.shortwaveRadiation);
     } catch {
       solar = num(latestWx?.shortwaveRadiation);
       priorSolarForDelta = num(priorWx?.shortwaveRadiation);
     }
     // Fallback to latest if no 24h window (e.g. no rows in last 24h but older rows exist)
     if (solar === null) solar = num(latestWx?.shortwaveRadiation);
-    if (priorSolarForDelta === null) priorSolarForDelta = num(priorWx?.shortwaveRadiation);
+    if (priorSolarForDelta === null)
+      priorSolarForDelta = num(priorWx?.shortwaveRadiation);
 
     const macro = {
       temp,
@@ -147,7 +166,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
       outdoorWorkerPct: outdoorWorkerFraction(population),
       informalIndex: VULNERABILITY_DEFAULTS.informalHousingIndex,
       informalDefaulted: vuln.flags.includes("informal_housing_default"),
-      settlementDensity: settlementDensity(VULNERABILITY_DEFAULTS.informalHousingIndex),
+      settlementDensity: settlementDensity(
+        VULNERABILITY_DEFAULTS.informalHousingIndex,
+      ),
       flags: vuln.flags,
     };
 
@@ -202,6 +223,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
               recovery: snap.recovery,
               wbgt: snap.wbgt,
               heatIndex: snap.heatIndex,
+              utci: (snap as unknown as { utci?: number | null }).utci ?? null,
               confidence: snap.confidence,
               computedAt: snap.computedAt,
             }
@@ -227,9 +249,15 @@ export async function GET(_req: Request, { params }: RouteParams) {
     );
   } catch (err) {
     if (err instanceof LocationNotFoundError) {
-      return NextResponse.json({ error: "Ward not found", wardId }, { status: 404 });
+      return NextResponse.json(
+        { error: "Ward not found", wardId },
+        { status: 404 },
+      );
     }
     console.error(`GET /api/wards/${wardId}/telemetry failed:`, err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

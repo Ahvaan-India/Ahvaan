@@ -21,7 +21,13 @@ export interface HeatCell {
 }
 
 /** Five-step sequential risk scale: teal → yellow → orange → red → deep red. */
-export const RISK_STEPS = ["#14b8a6", "#eab308", "#f97316", "#ef4444", "#991b1b"];
+export const RISK_STEPS = [
+  "#14b8a6",
+  "#eab308",
+  "#f97316",
+  "#ef4444",
+  "#991b1b",
+];
 const NO_DATA = "#9aa4b2";
 
 const W = 640;
@@ -36,10 +42,15 @@ export interface MapBounds {
   maxLat: number;
 }
 
-function project(lon: number, lat: number, bounds: MapBounds): [number, number] {
+function project(
+  lon: number,
+  lat: number,
+  bounds: MapBounds,
+): [number, number] {
   const midLat = ((bounds.minLat + bounds.maxLat) / 2) * (Math.PI / 180);
   const kx = Math.cos(midLat);
-  const x = ((lon - bounds.minLon) * kx) / ((bounds.maxLon - bounds.minLon) * kx || 1);
+  const x =
+    ((lon - bounds.minLon) * kx) / ((bounds.maxLon - bounds.minLon) * kx || 1);
   const y = 1 - (lat - bounds.minLat) / (bounds.maxLat - bounds.minLat || 1);
   return [x * W, y * H];
 }
@@ -62,12 +73,17 @@ function boundsOf(cells: HeatCell[]): MapBounds {
   }
   const padLon = (maxLon - minLon) * 0.05 || 0.01;
   const padLat = (maxLat - minLat) * 0.05 || 0.01;
-  return { minLon: minLon - padLon, maxLon: maxLon + padLon, minLat: minLat - padLat, maxLat: maxLat + padLat };
+  return {
+    minLon: minLon - padLon,
+    maxLon: maxLon + padLon,
+    minLat: minLat - padLat,
+    maxLat: maxLat + padLat,
+  };
 }
 
 /**
  * Zoomable ward choropleth with a cursor-following hover tooltip.
- * Zoom is a centered viewBox crop (buttons only — no scroll hijack);
+ * Zoom is a centered viewBox crop (buttons only  no scroll hijack);
  * each instance (inline + expanded) keeps independent zoom state.
  */
 function Choropleth({
@@ -86,7 +102,11 @@ function Choropleth({
   onHover: (id: number | null) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [tip, setTip] = useState<{ x: number; y: number; cell: HeatCell } | null>(null);
+  const [tip, setTip] = useState<{
+    x: number;
+    y: number;
+    cell: HeatCell;
+  } | null>(null);
   const [zoom, setZoom] = useState(1);
 
   const onMove = (e: React.MouseEvent, cell: HeatCell) => {
@@ -103,13 +123,37 @@ function Choropleth({
   return (
     <div className="map-wrap relative" ref={wrapRef}>
       <div className="absolute right-2 top-2 z-10 flex gap-1">
-        <Button variant="secondary" size="icon" className="h-7 w-7" onClick={() => setZoom((v) => Math.min(MAX_ZOOM, +(v + 0.5).toFixed(1)))} aria-label="Zoom in">
+        <Button
+          variant="secondary"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() =>
+            setZoom((v) => Math.min(MAX_ZOOM, +(v + 0.5).toFixed(1)))
+          }
+          aria-label="Zoom in"
+        >
           <ZoomIn />
         </Button>
-        <Button variant="secondary" size="icon" className="h-7 w-7" onClick={() => setZoom((v) => Math.max(MIN_ZOOM, +(v - 0.5).toFixed(1)))} aria-label="Zoom out" disabled={z <= MIN_ZOOM}>
+        <Button
+          variant="secondary"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() =>
+            setZoom((v) => Math.max(MIN_ZOOM, +(v - 0.5).toFixed(1)))
+          }
+          aria-label="Zoom out"
+          disabled={z <= MIN_ZOOM}
+        >
           <ZoomOut />
         </Button>
-        <Button variant="secondary" size="icon" className="h-7 w-7" onClick={() => setZoom(1)} aria-label="Reset zoom" disabled={z <= MIN_ZOOM}>
+        <Button
+          variant="secondary"
+          size="icon"
+          className="h-7 w-7"
+          onClick={() => setZoom(1)}
+          aria-label="Reset zoom"
+          disabled={z <= MIN_ZOOM}
+        >
           <Maximize />
         </Button>
       </div>
@@ -152,17 +196,22 @@ function Choropleth({
           aria-hidden
         >
           <p className="text-xs font-bold">
-            {tip.cell.ward !== null ? `Ward ${tip.cell.ward}` : `Loc ${tip.cell.wardId}`}
+            {tip.cell.ward !== null
+              ? `Ward ${tip.cell.ward}`
+              : `Loc ${tip.cell.wardId}`}
           </p>
           <div className="mt-1 flex items-center gap-1.5">
             <span className="text-lg font-extrabold tabular-nums">
-              {tip.cell.riskScore !== null ? tip.cell.riskScore.toFixed(3) : "—"}
+              {tip.cell.riskScore !== null ? tip.cell.riskScore.toFixed(3) : ""}
             </span>
             {tip.cell.category && <RiskBadge category={tip.cell.category} />}
           </div>
           <p className="mt-1 text-[11px] tabular-nums text-muted-foreground">
-            WBGT {tip.cell.wbgt !== null ? `${tip.cell.wbgt.toFixed(1)}°C` : "—"} · pop{" "}
-            {tip.cell.population !== null ? tip.cell.population.toLocaleString("en-IN") : "—"}
+            WBGT {tip.cell.wbgt !== null ? `${tip.cell.wbgt.toFixed(1)}°C` : ""}{" "}
+            · pop{" "}
+            {tip.cell.population !== null
+              ? tip.cell.population.toLocaleString("en-IN")
+              : ""}
           </p>
         </div>
       )}
@@ -195,9 +244,14 @@ export function HeatmapPanel({
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
-        <CardTitle className="text-base">Metropolitan Ward Risk Heatmap</CardTitle>
+        <CardTitle className="text-base">
+          Metropolitan Ward Risk Heatmap
+        </CardTitle>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-[11px] text-muted-foreground" aria-label="Risk legend: low to extreme">
+          <div
+            className="flex items-center gap-1 text-[11px] text-muted-foreground"
+            aria-label="Risk legend: low to extreme"
+          >
             {["Low", "Moderate", "Elevated", "High", "Extreme"].map((l, i) => (
               <span key={l} className="flex items-center gap-1">
                 <span
@@ -238,8 +292,15 @@ export function HeatmapPanel({
         >
           <Card className="max-h-[92vh] w-full max-w-5xl overflow-y-auto">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-base">Ward Risk Map — Large View</CardTitle>
-              <Button variant="ghost" size="icon" onClick={() => setExpanded(false)} aria-label="Close large view">
+              <CardTitle className="text-base">
+                Ward Risk Map Large View
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setExpanded(false)}
+                aria-label="Close large view"
+              >
                 <X />
               </Button>
             </CardHeader>

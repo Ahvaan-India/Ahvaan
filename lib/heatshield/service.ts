@@ -18,6 +18,7 @@ import {
 import { computeCompositeRisk } from "./composite";
 import { computeConfidenceScore } from "./confidence";
 import { computeMortalityIndex } from "./mortality";
+import { computeUTCI, estimateTmrt } from "./utci";
 import {
   buildSummary,
   computeTopDrivers,
@@ -36,12 +37,15 @@ import { DataGapError } from "../db/errors";
  * unit-testable with fabricated rows. The API routes only fetch + call this.
  *
  * Conventions:
- *  - "Current" indicators (wbgt / heatIndex) come from the LATEST hourly row.
+ *  - "Current" indicators (wbgt / heatIndex / utci) come from the LATEST hourly row.
  *  - T (thermal stress) is the latest hour's normalized thermal score; the
  *    full 72h series feeds P (persistence) and R (nighttime recovery).
- *  - UTCI is always unavailable with the current schema (no Tmrt) — we set
- *    utci_available = false and NEVER synthesize Tmrt from radiation.
- *  - Surface pressure is logged as missing (formula doesn't need it).
+ *  - UTCI = Ta + Offset(Ta,Tmrt,v10,pa) per Bröde et al. via pythermalcomfort
+ *    polynomial. Tmrt is estimated from shortwaveRadiation + wind when
+ *    available; flagged as `utci_estimated` in dataQualityFlags so confidence
+ *    can penalize it. Never silently treated as 0.
+ *  - Surface pressure is logged as missing (formula doesn't need it directly;
+ *    pa is derived from RH/Ta via Magnus-Tetens).
  */
 
 export interface PipelineInput {
@@ -52,6 +56,24 @@ export interface PipelineInput {
 
 function finiteOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+function utciForRow(row: WeatherRow): { utci: number | null; available: boolean; estimated: boolean } {
+  const Ta = finiteOrNull(row.temperature2m);
+  const RH = finiteOrNull(row.relativeHumidity2m);
+  const v10 = finiteOrNull(row.windSpeed10m);
+  const sr = finiteOrNull(row.shortwaveRadiation);
+  if (Ta === null || RH === null) return { utci: null, available: false, estimated: false };
+  // Need wind for offset; if missing, use 1 m/s fallback but mark unavailable? Use 1 and keep available false.
+  const wind = v10 ?? 1;
+  const { tmrt, estimated } = estimateTmrt(Ta, sr ?? 0, wind);
+  try {
+    const { utci } = computeUTCI(Ta, tmrt, wind, RH);
+    if (!Number.isFinite(utci)) return { utci: null, available: false, estimated: false };
+    return { utci, available: true, estimated };
+  } catch {
+    return { utci: null, available: false, estimated: false };
+  }
 }
 
 export function buildRiskResponse(input: PipelineInput): RiskResponse {
@@ -68,6 +90,8 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   const hourlyScores: number[] = [];
   const hourlyTemps: number[] = [];
   const hourlyTimes: Date[] = [];
+  let anyUtciAvailable = false;
+  let anyUtciEstimated = false;
 
   for (const row of weatherRows) {
     const ta = finiteOrNull(row.temperature2m);
@@ -75,11 +99,14 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     if (ta === null || rh === null) continue;
     const wbgt = wbgtApprox(ta, rh);
     const hi = heatIndexRothfusz(ta, rh);
+    const { utci, available, estimated } = utciForRow(row);
+    if (available) anyUtciAvailable = true;
+    if (estimated) anyUtciEstimated = true;
     const { score } = computeThermalStress({
       wbgt,
       heatIndex: hi,
-      utci: null,
-      utciAvailable: false,
+      utci: utci ?? null,
+      utciAvailable: available,
     });
     hourlyScores.push(score);
     hourlyTemps.push(ta);
@@ -96,12 +123,21 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   // Current indicators from the latest USABLE hour (walk back from the end).
   let latestWbgt = 0;
   let latestHi = 0;
+  let latestUtci: number | null = null;
+  let latestUtciAvailable = false;
+  let latestUtciEstimated = false;
   for (let i = weatherRows.length - 1; i >= 0; i--) {
     const ta = finiteOrNull(weatherRows[i].temperature2m);
     const rh = finiteOrNull(weatherRows[i].relativeHumidity2m);
     if (ta !== null && rh !== null) {
       latestWbgt = wbgtApprox(ta, rh);
       latestHi = heatIndexRothfusz(ta, rh);
+      const u = utciForRow(weatherRows[i]);
+      latestUtci = u.utci;
+      latestUtciAvailable = u.available;
+      latestUtciEstimated = u.estimated;
+      if (u.available) anyUtciAvailable = true;
+      if (u.estimated) anyUtciEstimated = true;
       break;
     }
   }
@@ -109,15 +145,16 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   const thermal = computeThermalStress({
     wbgt: latestWbgt,
     heatIndex: latestHi,
-    utci: null,
-    utciAvailable: false,
+    utci: latestUtci,
+    utciAvailable: latestUtciAvailable,
   });
 
   const exposure = computeExposureScore(population, location.geometry);
   const vulnerability = computeVulnerabilityScore(population);
 
+  const { timeZone } = timezoneForLocation(location.lat, location.long);
   const persistence = computePersistence(hourlyScores);
-  const nighttimeRecovery = computeNighttimeRecovery(hourlyTemps, hourlyTimes);
+  const nighttimeRecovery = computeNighttimeRecovery(hourlyTemps, hourlyTimes, { timeZone });
 
   const composite = computeCompositeRisk({
     T: thermal.score,
@@ -126,11 +163,17 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     P: persistence,
   });
 
+  const utciFlag = anyUtciAvailable
+    ? anyUtciEstimated
+      ? "utci_estimated"
+      : "utci_available"
+    : VULNERABILITY_FLAGS.utciUnavailable;
   const dataQualityFlags = Array.from(
     new Set([
       ...vulnerability.flags,
       ...exposure.flags,
-      VULNERABILITY_FLAGS.utciUnavailable,
+      utciFlag,
+      ...(latestUtciEstimated ? ["utci_estimated"] : []),
     ]),
   );
   const missingInputs = ["pressure"];
@@ -140,7 +183,7 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     dataQualityFlags,
     weatherRowCount: weatherRows.length,
     expectedRowCount: EXPECTED_WEATHER_ROWS,
-    utciAvailable: false,
+    utciAvailable: anyUtciAvailable,
   });
 
   const top_drivers = computeTopDrivers({
@@ -153,8 +196,6 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     heatIndex: latestHi,
     confidence,
   });
-
-  const { timeZone } = timezoneForLocation(location.lat, location.long);
 
   const mortality = computeMortalityIndex({
     heatIndex: latestHi,
@@ -171,8 +212,8 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     indicators: {
       wbgt: round3(latestWbgt),
       heatIndex: round3(latestHi),
-      utci: null,
-      utciAvailable: false,
+      utci: latestUtci !== null ? round3(latestUtci) : null,
+      utciAvailable: latestUtciAvailable,
     },
     scores: {
       thermalStress: round3(thermal.score),

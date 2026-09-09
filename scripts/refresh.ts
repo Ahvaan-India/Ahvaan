@@ -78,6 +78,7 @@ async function main() {
             recovery: r.scores.nighttimeRecovery,
             wbgt: r.indicators.wbgt,
             heatIndex: r.indicators.heatIndex,
+            utci: r.indicators.utci,
             confidence: r.confidence.score,
             computedAt,
           };

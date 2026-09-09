@@ -21,7 +21,7 @@ export interface ExposureComponents {
  * over totalWorkers. Household-industry work in India is frequently
  * home-based but poorly ventilated / heat-exposed, hence included;
  * cultivators are deliberately EXCLUDED here (often land-holding
- * supervisors) — revisit if field data says otherwise.
+ * supervisors)  revisit if field data says otherwise.
  */
 export function outdoorWorkerFraction(pop: PopulationRow): number {
   const outdoor =
@@ -50,9 +50,10 @@ function normalize(value: number, min: number, max: number): number {
  * Supports Polygon / MultiPolygon by scanning all coordinates; falls back
  * to EXPOSURE_FALLBACK_CELL_AREA_KM2 (1 km²) with a data-quality flag.
  */
-export function cellAreaKm2(
-  geometry: unknown,
-): { areaKm2: number; usedFallback: boolean } {
+export function cellAreaKm2(geometry: unknown): {
+  areaKm2: number;
+  usedFallback: boolean;
+} {
   try {
     // Live DB stores ward polygons as RAW rings: [[lon,lat],...].
     // Accept them directly, plus GeoJSON Polygon/MultiPolygon objects.
@@ -67,18 +68,22 @@ export function cellAreaKm2(
       coordinates?: unknown;
       bbox?: [number, number, number, number];
     } | null;
-    if (!geom) return { areaKm2: EXPOSURE_FALLBACK_CELL_AREA_KM2, usedFallback: true };
+    if (!geom)
+      return { areaKm2: EXPOSURE_FALLBACK_CELL_AREA_KM2, usedFallback: true };
     if (
       Array.isArray(geom.bbox) &&
       geom.bbox.length === 4 &&
       geom.bbox.every((n) => Number.isFinite(n))
     ) {
       const [minX, minY, maxX, maxY] = geom.bbox;
-      const area = Math.abs(maxX - minX) * Math.abs(maxY - minY) * KM2_PER_DEG2_APPROX;
-      if (area > 0 && Number.isFinite(area)) return { areaKm2: area, usedFallback: false };
+      const area =
+        Math.abs(maxX - minX) * Math.abs(maxY - minY) * KM2_PER_DEG2_APPROX;
+      if (area > 0 && Number.isFinite(area))
+        return { areaKm2: area, usedFallback: false };
     }
     const coords = geom.coordinates;
-    if (!coords) return { areaKm2: EXPOSURE_FALLBACK_CELL_AREA_KM2, usedFallback: true };
+    if (!coords)
+      return { areaKm2: EXPOSURE_FALLBACK_CELL_AREA_KM2, usedFallback: true };
     const area = bboxOfCoords(coords);
     if (area) return { areaKm2: area, usedFallback: false };
   } catch {
@@ -105,7 +110,11 @@ function bboxOfCoords(coords: unknown): number | null {
     }
   };
   visit(coords);
-  if ([minX, minY, maxX, maxY].every(Number.isFinite) && maxX > minX && maxY > minY) {
+  if (
+    [minX, minY, maxX, maxY].every(Number.isFinite) &&
+    maxX > minX &&
+    maxY > minY
+  ) {
     const area = (maxX - minX) * (maxY - minY) * KM2_PER_DEG2_APPROX;
     if (area > 0 && Number.isFinite(area)) return area;
   }
@@ -150,5 +159,13 @@ export function computeExposureScore(
       EXPOSURE_WEIGHTS.density * eDensity +
       EXPOSURE_WEIGHTS.outdoorWorkers * eOutdoor,
   );
-  return { score, components: { population: ePop, density: eDensity, outdoorWorkers: eOutdoor }, flags };
+  return {
+    score,
+    components: {
+      population: ePop,
+      density: eDensity,
+      outdoorWorkers: eOutdoor,
+    },
+    flags,
+  };
 }

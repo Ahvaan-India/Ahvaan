@@ -1,6 +1,6 @@
 /**
  * WhatsApp prototype: Click to Chat deep-link composer.
- * No Business API, no keys — builds a wa.me URL the operator opens, then
+ * No Business API, no keys  builds a wa.me URL the operator opens, then
  * sends inside WhatsApp itself. Delivery logging happens separately via
  * POST /api/alerts/deliveries (initiation only, no receipts).
  */
@@ -40,7 +40,10 @@ function fmtHour(iso: string | null, timeZone: string): string | null {
 }
 
 /** Auto-composed advisory message (editable preview in the modal). */
-export function composeAlertMessage(ctx: AlertContext, timeZone: string): string {
+export function composeAlertMessage(
+  ctx: AlertContext,
+  timeZone: string,
+): string {
   const sev = ctx.severity === "EXTREME" ? "EXTREME" : "HIGH";
   const emoji = ctx.severity === "EXTREME" ? "🔴" : "🟠";
   const wardLine =
@@ -48,11 +51,9 @@ export function composeAlertMessage(ctx: AlertContext, timeZone: string): string
   const name = ctx.wardName ? ` · ${ctx.wardName}` : "";
   const start = fmtHour(ctx.peakWindowStart, timeZone);
   const end = fmtHour(ctx.peakWindowEnd, timeZone);
-  const lines = [
-    `${emoji} Ahvaan — ${sev} Alert`,
-    `${wardLine}${name}`,
-  ];
-  if (start && end) lines.push(`Peak heat window: ${start}–${end} (${timeZone})`);
+  const lines = [`${emoji} Ahvaan  ${sev} Alert`, `${wardLine}${name}`];
+  if (start && end)
+    lines.push(`Peak heat window: ${start}–${end} (${timeZone})`);
   const metrics: string[] = [];
   if (ctx.wbgt !== null) metrics.push(`WBGT ${ctx.wbgt.toFixed(1)}°C`);
   metrics.push(`Risk ${(ctx.riskScore * 100).toFixed(0)}/100`);

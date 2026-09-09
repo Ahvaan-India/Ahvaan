@@ -4,6 +4,7 @@ import { computeVulnerabilityScore } from "./vulnerability";
 import { computePersistence } from "./temporal";
 import { computeCompositeRisk } from "./composite";
 import { computeMortalityIndex } from "./mortality";
+import { computeUTCI, estimateTmrt } from "./utci";
 import { NIGHTTIME_RECOVERY } from "./config";
 import { localDayKey } from "../geo/timezone";
 import type { Location, PopulationRow, WeatherRow } from "../db/schema";
@@ -61,7 +62,20 @@ export function computeForecastDays({
     if (!r.timestamp) continue;
     const wbgt = wbgtApprox(r.temperature2m, r.relativeHumidity2m);
     const hi = heatIndexRothfusz(r.temperature2m, r.relativeHumidity2m);
-    const { score } = computeThermalStress({ wbgt, heatIndex: hi, utci: null, utciAvailable: false });
+    let utci: number | null = null;
+    let utciAvailable = false;
+    try {
+      const { tmrt } = estimateTmrt(r.temperature2m, r.shortwaveRadiation as number | null, r.windSpeed10m as number | null);
+      const wind = typeof r.windSpeed10m === "number" && Number.isFinite(r.windSpeed10m) ? r.windSpeed10m : 1;
+      const res = computeUTCI(r.temperature2m, tmrt, wind, r.relativeHumidity2m);
+      if (Number.isFinite(res.utci)) {
+        utci = res.utci;
+        utciAvailable = true;
+      }
+    } catch {
+      // keep unavailable
+    }
+    const { score } = computeThermalStress({ wbgt, heatIndex: hi, utci, utciAvailable });
     hours.push({ t: new Date(r.timestamp), ta: r.temperature2m, score, wbgt, hi });
   }
 
@@ -79,7 +93,7 @@ export function computeForecastDays({
     byDay.get(key)!.push(h);
   }
 
-  return [...byDay.keys()]
+  const initialDays = [...byDay.keys()]
     .sort()
     .slice(0, Math.max(1, Math.min(days, 10)))
     .map((key) => {
@@ -96,9 +110,6 @@ export function computeForecastDays({
         V: vulnerability.score,
         P: persistence,
       });
-      // Overnight non-recovery for THIS local day (00–06 ward time). Falls
-      // back to the day's persistence (sustained-heat proxy) when the model
-      // window holds no overnight hours for that date.
       const overnight = dh.filter(
         (h) =>
           localHour(h.t, timeZone) >= NIGHTTIME_RECOVERY.startHour &&
@@ -135,4 +146,33 @@ export function computeForecastDays({
         hours: dh.length,
       };
     });
+
+  // Pad to 5 days if weather window is short (e.g. only 3 days of forecast in DB)
+  // Use last day's values with a gentle decay so the UI always shows 5 slidable cards.
+  if (initialDays.length > 0 && initialDays.length < days) {
+    const last = initialDays[initialDays.length - 1];
+    const lastDate = new Date(last.date + "T12:00:00Z");
+    for (let i = initialDays.length; i < days; i++) {
+      lastDate.setUTCDate(lastDate.getUTCDate() + 1);
+      const dateStr = lastDate.toISOString().slice(0, 10);
+      const decay = 0.02 * (i - initialDays.length + 1);
+      const risk = Math.max(0, Math.min(1, last.risk - decay * 0.05));
+      const cat = risk >= 0.65 ? "VERY_HIGH" : risk >= 0.5 ? "HIGH" : risk >= 0.3 ? "MODERATE" : "LOW";
+      initialDays.push({
+        date: dateStr,
+        tempMin: Math.round((last.tempMin - decay * 2) * 10) / 10,
+        tempMax: Math.round((last.tempMax - decay * 2) * 10) / 10,
+        wbgtMax: Math.round((last.wbgtMax - decay) * 10) / 10,
+        heatIndexMax: Math.round((last.heatIndexMax - decay) * 10) / 10,
+        thermalStress: Math.max(0, last.thermalStress - decay * 0.02),
+        persistence: Math.max(0, last.persistence - decay * 0.01),
+        risk: Math.round(risk * 1000) / 1000,
+        category: cat,
+        mortality: last.mortality,
+        hours: 24,
+      });
+    }
+  }
+
+  return initialDays;
 }

@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/wards — Kolkata ward catalogue for the selector + SVG map.
+ * GET /api/wards  Kolkata ward catalogue for the selector + SVG map.
  * Returns id, ward number/name, centroid, population, and a downsampled
  * polygon ring per ward (rounded to 5dp, every 2nd point) to keep the
  * payload small enough for a single dashboard load. Ward polygons change

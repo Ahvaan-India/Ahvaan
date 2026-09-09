@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/whatsapp/send — Direct Avhaan WhatsApp API sending route.
+ * POST /api/whatsapp/send  Direct Avhaan WhatsApp API sending route.
  * Expects JSON: { recipientPhone: string, messageText: string, alertId?: number, sentBy?: string }
  */
 export async function POST(req: Request) {
@@ -19,7 +19,10 @@ export async function POST(req: Request) {
   try {
     body = (await req.json()) as typeof body;
   } catch {
-    return NextResponse.json({ error: "Invalid JSON payload" }, { status: 400 });
+    return NextResponse.json(
+      { error: "Invalid JSON payload" },
+      { status: 400 },
+    );
   }
 
   const phone = (body.recipientPhone ?? "").replace(/[^\d]/g, "");
@@ -31,7 +34,10 @@ export async function POST(req: Request) {
   }
 
   if (!body.messageText || body.messageText.trim().length === 0) {
-    return NextResponse.json({ error: "messageText is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "messageText is required" },
+      { status: 400 },
+    );
   }
 
   try {
@@ -70,6 +76,9 @@ export async function POST(req: Request) {
     );
   } catch (err) {
     console.error("POST /api/whatsapp/send failed:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

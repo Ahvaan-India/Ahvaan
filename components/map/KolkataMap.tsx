@@ -1,11 +1,14 @@
 "use client";
 
-import { useMemo, useRef, useState, memo, useCallback, useEffect } from "react";
+import { useMemo, useRef, useState, memo, useCallback } from "react";
 import { ZoomIn, ZoomOut, LocateFixed, Maximize2 } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { Button } from "@/components/ui/button";
 import { RiskBadge } from "@/components/console/RiskBadge";
-import { getWardLocality, getWardDisplayName, matchesWardQuery } from "@/lib/geo/wardNames";
+import {
+  getWardLocality,
+  getWardDisplayName,
+  matchesWardQuery,
+} from "@/lib/geo/wardNames";
 import { useIsMobile } from "@/lib/hooks/useMobile";
 
 export interface MapWard {
@@ -17,11 +20,24 @@ export interface MapWard {
   displayCategory: string | null;
   step: number | null;
   wbgt: number | null;
+  heatIndex: number | null;
+  utci: number | null;
+  thermal: number | null;
+  exposure: number | null;
+  vulnerability: number | null;
   population: number | null;
+  lat: number;
+  long: number;
   ring: Array<[number, number]>;
 }
 
-export const RISK_COLORS = ["#14b8a6", "#eab308", "#f97316", "#ef4444", "#991b1b"] as const;
+export const RISK_COLORS = [
+  "#14b8a6",
+  "#eab308",
+  "#f97316",
+  "#ef4444",
+  "#991b1b",
+] as const;
 const NO_DATA = "#cbd5e1";
 
 const W = 640;
@@ -45,43 +61,151 @@ function project(lon: number, lat: number, b: MapBounds): [number, number] {
 }
 
 function boundsOf(cells: MapWard[]): MapBounds {
-  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
-  for (const c of cells) for (const [lon, lat] of c.ring) {
-    if (lon < minLon) minLon = lon; if (lon > maxLon) maxLon = lon;
-    if (lat < minLat) minLat = lat; if (lat > maxLat) maxLat = lat;
-  }
-  if (!cells.length || !Number.isFinite(minLon)) return { minLon: 88.2, maxLon: 88.5, minLat: 22.4, maxLat: 22.7 };
+  let minLon = Infinity,
+    maxLon = -Infinity,
+    minLat = Infinity,
+    maxLat = -Infinity;
+  for (const c of cells)
+    for (const [lon, lat] of c.ring) {
+      if (lon < minLon) minLon = lon;
+      if (lon > maxLon) maxLon = lon;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    }
+  if (!cells.length || !Number.isFinite(minLon))
+    return { minLon: 88.2, maxLon: 88.5, minLat: 22.4, maxLat: 22.7 };
   const padLon = (maxLon - minLon) * 0.05 || 0.01;
   const padLat = (maxLat - minLat) * 0.05 || 0.01;
-  return { minLon: minLon - padLon, maxLon: maxLon + padLon, minLat: minLat - padLat, maxLat: maxLat + padLat };
+  return {
+    minLon: minLon - padLon,
+    maxLon: maxLon + padLon,
+    minLat: minLat - padLat,
+    maxLat: maxLat + padLat,
+  };
 }
 
 function centroid(cell: MapWard): [number, number] | null {
   if (!cell.ring.length) return null;
-  let sx = 0, sy = 0;
-  for (const [lon, lat] of cell.ring) { sx += lon; sy += lat; }
+  let sx = 0,
+    sy = 0;
+  for (const [lon, lat] of cell.ring) {
+    sx += lon;
+    sy += lat;
+  }
   return [sx / cell.ring.length, sy / cell.ring.length];
 }
 
+function layerValue(c: MapWard, layer: string): number | null {
+  switch (layer) {
+    case "risk":
+      return null; // use category, not value
+    case "thermal":
+      return c.thermal;
+    case "wbgt":
+      return c.wbgt;
+    case "hi":
+      return c.heatIndex;
+    case "exposure":
+      return c.exposure;
+    case "vulnerability":
+      return c.vulnerability;
+    default:
+      return null;
+  }
+}
+
+function layerStepFor(c: MapWard, layer: string): number | null {
+  // Risk uses fixed categories (LOW/MODERATE/HIGH/VERY_HIGH)  stable, not decimal-sensitive
+  if (layer === "risk") {
+    switch (c.category) {
+      case "VERY_HIGH":
+        return 5;
+      case "HIGH":
+        return 4;
+      case "MODERATE":
+        return 3;
+      case "LOW":
+        return 1;
+      default:
+        return c.step ?? 2;
+    }
+  }
+  const v = layerValue(c, layer);
+  if (v === null || !Number.isFinite(v)) return c.step;
+  let n: number;
+  if (layer === "wbgt") n = (v - 15) / 25;
+  else if (layer === "hi") n = (v - 20) / 35;
+  else n = v; // thermal/exposure/vuln already 0–1
+  const clamped = Math.max(0, Math.min(1, n));
+  if (clamped >= 0.8) return 5;
+  if (clamped >= 0.6) return 4;
+  if (clamped >= 0.4) return 3;
+  if (clamped >= 0.2) return 2;
+  return 1;
+}
+
 const WardPolygon = memo(function WardPolygon({
-  cell, bounds, zoom, isSel, isHov, isSearchMatch, dimmed, onHover, onSelect, onMove
+  cell,
+  bounds,
+  zoom,
+  layer,
+  isSel,
+  isHov,
+  isSearchMatch,
+  dimmed,
+  onHover,
+  onSelect,
+  onMove,
 }: {
-  cell: MapWard; bounds: MapBounds; zoom: number;
-  isSel: boolean; isHov: boolean; isSearchMatch: boolean; dimmed: boolean;
-  onHover: (id: number | null) => void; onSelect: (id: number) => void;
+  cell: MapWard;
+  bounds: MapBounds;
+  zoom: number;
+  layer: string;
+  isSel: boolean;
+  isHov: boolean;
+  isSearchMatch: boolean;
+  dimmed: boolean;
+  onHover: (id: number | null) => void;
+  onSelect: (id: number) => void;
   onMove: (e: React.MouseEvent, c: MapWard) => void;
 }) {
-  const pts = useMemo(() => cell.ring.map(([lon, lat]) => project(lon, lat, bounds).join(",")).join(" "), [cell.ring, bounds]);
-  const fill = cell.step ? RISK_COLORS[cell.step - 1] : NO_DATA;
+  const pts = useMemo(
+    () =>
+      cell.ring
+        .map(([lon, lat]) => project(lon, lat, bounds).join(","))
+        .join(" "),
+    [cell.ring, bounds],
+  );
+  const step = layerStepFor(cell, layer);
+  const fill = step ? RISK_COLORS[step - 1] : NO_DATA;
   return (
     <polygon
       points={pts}
       fill={fill}
       fillOpacity={dimmed ? 0.25 : isSel || isHov || isSearchMatch ? 1 : 0.86}
-      stroke={isSel ? "#0f172a" : isSearchMatch ? "#2563eb" : isHov ? "#334155" : "white"}
-      strokeWidth={isSel ? 1.6 / zoom : isSearchMatch ? 1.2 / zoom : isHov ? 1 / zoom : 0.5 / zoom}
+      stroke={
+        isSel
+          ? "#0f172a"
+          : isSearchMatch
+            ? "#2563eb"
+            : isHov
+              ? "#334155"
+              : "white"
+      }
+      strokeWidth={
+        isSel
+          ? 1.6 / zoom
+          : isSearchMatch
+            ? 1.2 / zoom
+            : isHov
+              ? 1 / zoom
+              : 0.5 / zoom
+      }
       strokeLinejoin="round"
-      style={{ cursor: "pointer", transition: "fill 0.2s ease, fill-opacity 0.2s ease" }}
+      style={{
+        cursor: "pointer",
+        transition: "fill 0.2s ease, fill-opacity 0.2s ease",
+      }}
       onMouseEnter={() => onHover(cell.wardId)}
       onMouseMove={(e) => onMove(e, cell)}
       onClick={() => onSelect(cell.wardId)}
@@ -90,9 +214,9 @@ const WardPolygon = memo(function WardPolygon({
 });
 
 /**
- * KolkataMap — Google-Maps-like SVG map.
+ * KolkataMap  Google-Maps-like SVG map.
  * Pan (drag) + zoom (buttons + wheel) + hover tooltip + ward-name labels
- * + search highlight. Optimized: polygons memoized, bounds memoized.
+ * + search highlight + layer recoloring. Optimized: polygons memoized, bounds memoized.
  */
 export function KolkataMap({
   cells,
@@ -101,6 +225,7 @@ export function KolkataMap({
   onSelect,
   onHover,
   searchQuery,
+  layer = "risk",
 }: {
   cells: MapWard[];
   selectedId: number | null;
@@ -108,13 +233,23 @@ export function KolkataMap({
   onSelect: (id: number) => void;
   onHover: (id: number | null) => void;
   searchQuery?: string;
+  layer?: import("@/components/console/LeftSidebar").MapLayer;
 }) {
   const bounds = useMemo(() => boundsOf(cells), [cells]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [drag, setDrag] = useState<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
-  const [tip, setTip] = useState<{ x: number; y: number; cell: MapWard } | null>(null);
+  const [drag, setDrag] = useState<{
+    sx: number;
+    sy: number;
+    ox: number;
+    oy: number;
+  } | null>(null);
+  const [tip, setTip] = useState<{
+    x: number;
+    y: number;
+    cell: MapWard;
+  } | null>(null);
   const isMobile = useIsMobile();
   const prefersReduced = useReducedMotion();
   const reduceMotion = !!prefersReduced || isMobile;
@@ -122,25 +257,32 @@ export function KolkataMap({
   const z = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
 
   // Derived viewBox with pan (pan is in viewBox units)
-  const vbW = W / z, vbH = H / z;
-  const baseX = W / 2 - vbW / 2, baseY = H / 2 - vbH / 2;
-  const vbX = baseX - pan.x, vbY = baseY - pan.y;
+  const vbW = W / z,
+    vbH = H / z;
+  const baseX = W / 2 - vbW / 2,
+    baseY = H / 2 - vbH / 2;
+  const vbX = baseX - pan.x,
+    vbY = baseY - pan.y;
   const vb = `${vbX} ${vbY} ${vbW} ${vbH}`;
 
-  const onMove = useCallback((e: React.MouseEvent, cell: MapWard) => {
-    if (isMobile) return; // no hover tooltip on touch, use tap
-    const rect = wrapRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = Math.min(e.clientX - rect.left + 14, rect.width - 188);
-    const y = Math.min(e.clientY - rect.top + 14, rect.height - 120);
-    setTip({ x: Math.max(x, 6), y: Math.max(y, 6), cell });
-  }, [isMobile]);
+  const onMove = useCallback(
+    (e: React.MouseEvent, cell: MapWard) => {
+      if (isMobile) return; // no hover tooltip on touch, use tap
+      const rect = wrapRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const x = Math.min(e.clientX - rect.left + 14, rect.width - 188);
+      const y = Math.min(e.clientY - rect.top + 14, rect.height - 120);
+      setTip({ x: Math.max(x, 6), y: Math.max(y, 6), cell });
+    },
+    [isMobile],
+  );
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (!e.ctrlKey && !e.metaKey) return; // require ctrl to zoom so page scroll works
     e.preventDefault();
-    const delta = -e.deltaY * 0.002;
-    setZoom((v) => Math.min(MAX_Z, Math.max(MIN_Z, +(v * (1 + delta)).toFixed(2))));
+    const delta = -e.deltaY * 0.0025;
+    setZoom((v) =>
+      Math.min(MAX_Z, Math.max(MIN_Z, +(v * (1 + delta)).toFixed(2))),
+    );
   }, []);
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -150,22 +292,36 @@ export function KolkataMap({
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!drag || !wrapRef.current) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    const scaleX = vbW / rect.width, scaleY = vbH / rect.height;
-    setPan({ x: drag.ox + (e.clientX - drag.sx) * scaleX, y: drag.oy + (e.clientY - drag.sy) * scaleY });
+    const scaleX = vbW / rect.width,
+      scaleY = vbH / rect.height;
+    setPan({
+      x: drag.ox + (e.clientX - drag.sx) * scaleX,
+      y: drag.oy + (e.clientY - drag.sy) * scaleY,
+    });
   };
   const handlePointerUp = (e: React.PointerEvent) => {
-    try { (e.target as Element).releasePointerCapture(e.pointerId); } catch {}
+    try {
+      (e.target as Element).releasePointerCapture(e.pointerId);
+    } catch {}
     setDrag(null);
   };
 
   const normalizedSearch = (searchQuery ?? "").trim().toLowerCase();
-  const isMatch = useCallback((c: MapWard) => {
-    if (!normalizedSearch) return false;
-    return matchesWardQuery(c.ward, c.wardName, getWardLocality(c.ward), normalizedSearch);
-  }, [normalizedSearch]);
+  const isMatch = useCallback(
+    (c: MapWard) => {
+      if (!normalizedSearch) return false;
+      return matchesWardQuery(
+        c.ward,
+        c.wardName,
+        getWardLocality(c.ward),
+        normalizedSearch,
+      );
+    },
+    [normalizedSearch],
+  );
   const hasSearch = !!normalizedSearch;
 
-  // Ward labels — show when zoomed or when hovered/selected/search match
+  // Ward labels  show when zoomed or when hovered/selected/search match
   const showLabels = z > 1.2 && !isMobile ? true : z > 1.0;
 
   return (
@@ -174,13 +330,27 @@ export function KolkataMap({
       className="relative h-full w-full overflow-hidden bg-[#eef2f7] dark:bg-[#0f172a] touch-none select-none"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerLeave={() => { onHover(null); setTip(null); }}
+      onPointerLeave={() => {
+        onHover(null);
+        setTip(null);
+      }}
       onPointerDown={handlePointerDown}
       onWheel={handleWheel}
-      style={{ cursor: drag ? "grabbing" : "grab", willChange: drag ? "transform" : undefined }}
+      style={{
+        cursor: drag ? "grabbing" : "grab",
+        willChange: drag ? "transform" : undefined,
+      }}
     >
       {/* Map tiles subtle grid */}
-      <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "linear-gradient(to right, #64748b 1px, transparent 1px), linear-gradient(to bottom, #64748b 1px, transparent 1px)", backgroundSize: "40px 40px" }} aria-hidden />
+      <div
+        className="absolute inset-0 opacity-[0.04]"
+        style={{
+          backgroundImage:
+            "linear-gradient(to right, #64748b 1px, transparent 1px), linear-gradient(to bottom, #64748b 1px, transparent 1px)",
+          backgroundSize: "40px 40px",
+        }}
+        aria-hidden
+      />
 
       <svg
         viewBox={vb}
@@ -188,14 +358,78 @@ export function KolkataMap({
         role="img"
         aria-label="Kolkata ward map"
       >
-        {/* Water / land hint behind polygons */}
-        <rect x={vbX} y={vbY} width={vbW} height={vbH} fill="none" />
+        {/* Surrounding  light base for metro context */}
+        <rect
+          x={vbX}
+          y={vbY}
+          width={vbW}
+          height={vbH}
+          fill="#f1f5f9"
+          className="dark:fill-[#1e293b]/40"
+        />
+        {/* Hooghly River hint  west of city */}
+        <rect
+          x={vbX}
+          y={vbY}
+          width={vbW * 0.12}
+          height={vbH}
+          fill="#e0f2fe"
+          opacity={0.6}
+          className="dark:fill-[#0c4a6e]/20"
+        />
+        {/* Surrounding district labels  subtle */}
+        <text
+          x={vbX + vbW * 0.06}
+          y={vbY + vbH * 0.5}
+          textAnchor="middle"
+          fontSize={8 / z}
+          fill="#94a3b8"
+          opacity={0.7}
+          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
+        >
+          Howrah
+        </text>
+        <text
+          x={vbX + vbW * 0.5}
+          y={vbY + 14 / z}
+          textAnchor="middle"
+          fontSize={7 / z}
+          fill="#94a3b8"
+          opacity={0.6}
+          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
+        >
+          North 24 Pgs
+        </text>
+        <text
+          x={vbX + vbW * 0.5}
+          y={vbY + vbH - 8 / z}
+          textAnchor="middle"
+          fontSize={7 / z}
+          fill="#94a3b8"
+          opacity={0.6}
+          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
+        >
+          South 24 Pgs
+        </text>
+        <text
+          x={vbX + vbW - 18 / z}
+          y={vbY + vbH * 0.5}
+          textAnchor="middle"
+          fontSize={7 / z}
+          fill="#94a3b8"
+          opacity={0.6}
+          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
+          transform={`rotate(90, ${vbX + vbW - 18 / z}, ${vbY + vbH * 0.5})`}
+        >
+          East Kolkata Wetlands
+        </text>
         {cells.map((c) => (
           <WardPolygon
             key={c.wardId}
             cell={c}
             bounds={bounds}
             zoom={z}
+            layer={layer}
             isSel={c.wardId === selectedId}
             isHov={c.wardId === hoveredId}
             isSearchMatch={isMatch(c)}
@@ -205,12 +439,16 @@ export function KolkataMap({
             onMove={onMove}
           />
         ))}
-        {/* Ward name labels — centroid-placed, non-scaling text */}
+        {/* Ward name labels  centroid-placed, non-scaling text */}
         {cells.map((c) => {
           const cen = centroid(c);
           if (!cen) return null;
           const [sx, sy] = project(cen[0], cen[1], bounds);
-          const show = showLabels || c.wardId === selectedId || c.wardId === hoveredId || isMatch(c);
+          const show =
+            showLabels ||
+            c.wardId === selectedId ||
+            c.wardId === hoveredId ||
+            isMatch(c);
           if (!show) return null;
           const loc = getWardLocality(c.ward);
           const numLabel = c.ward !== null ? String(c.ward) : String(c.wardId);
@@ -228,11 +466,20 @@ export function KolkataMap({
                 dominantBaseline="central"
                 fontSize={Math.max(5, 9 / Math.pow(z, 0.4))}
                 fontWeight={isEmph ? 800 : 600}
-                fill={c.wardId === selectedId ? "white" : c.step && c.step >= 4 ? "white" : "#1e293b"}
+                fill={
+                  c.wardId === selectedId
+                    ? "white"
+                    : c.step && c.step >= 4
+                      ? "white"
+                      : "#1e293b"
+                }
                 stroke={c.wardId === selectedId ? "rgba(0,0,0,0.35)" : "white"}
                 strokeWidth={0.6 / z}
                 paintOrder="stroke"
-                style={{ fontFamily: "var(--font-sans), Archivo, sans-serif", userSelect: "none" }}
+                style={{
+                  fontFamily: "var(--font-sans), Archivo, sans-serif",
+                  userSelect: "none",
+                }}
               >
                 {numLabel}
               </text>
@@ -248,7 +495,10 @@ export function KolkataMap({
                   stroke="white"
                   strokeWidth={0.4 / z}
                   paintOrder="stroke"
-                  style={{ fontFamily: "var(--font-sans), Archivo, sans-serif", userSelect: "none" }}
+                  style={{
+                    fontFamily: "var(--font-sans), Archivo, sans-serif",
+                    userSelect: "none",
+                  }}
                 >
                   {loc!.length > 13 ? loc!.slice(0, 12) + "…" : loc!}
                 </text>
@@ -258,38 +508,87 @@ export function KolkataMap({
         })}
       </svg>
 
-      {/* Zoom controls — Google Maps style vertical stack */}
+      {/* Zoom controls  Google Maps style vertical stack */}
       <div className="absolute bottom-4 right-3 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform">
-        <button onClick={() => setZoom((v) => Math.min(MAX_Z, +(v + 0.6).toFixed(1)))} className="flex h-9 w-9 items-center justify-center hover:bg-muted" aria-label="Zoom in">
+        <button
+          onClick={() => setZoom((v) => Math.min(MAX_Z, +(v + 0.6).toFixed(1)))}
+          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
+          aria-label="Zoom in"
+        >
           <ZoomIn className="h-4 w-4" />
         </button>
         <div className="h-px bg-border" />
-        <button onClick={() => setZoom((v) => Math.max(MIN_Z, +(v - 0.6).toFixed(1)))} className="flex h-9 w-9 items-center justify-center hover:bg-muted" aria-label="Zoom out" disabled={z <= MIN_Z + 0.01}>
+        <button
+          onClick={() => setZoom((v) => Math.max(MIN_Z, +(v - 0.6).toFixed(1)))}
+          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
+          aria-label="Zoom out"
+          disabled={z <= MIN_Z + 0.01}
+        >
           <ZoomOut className="h-4 w-4 opacity-60" />
         </button>
         <div className="h-px bg-border" />
-        <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="flex h-9 w-9 items-center justify-center hover:bg-muted" aria-label="Reset view">
+        <button
+          onClick={() => {
+            setZoom(1);
+            setPan({ x: 0, y: 0 });
+          }}
+          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
+          aria-label="Reset view"
+        >
           <Maximize2 className="h-3.5 w-3.5" />
         </button>
         <div className="h-px bg-border" />
         <button
           onClick={() => {
             const first = cells[0];
-            if (first) { const cb = centroid(first); if (cb) { const [sx, sy] = project(cb[0], cb[1], bounds); setPan({ x: W / 2 - sx - vbW / 2 + baseX, y: H / 2 - sy - vbH / 2 + baseY }); setZoom(2); } }
+            if (first) {
+              const cb = centroid(first);
+              if (cb) {
+                const [sx, sy] = project(cb[0], cb[1], bounds);
+                setPan({
+                  x: W / 2 - sx - vbW / 2 + baseX,
+                  y: H / 2 - sy - vbH / 2 + baseY,
+                });
+                setZoom(2);
+              }
+            }
           }}
-          className="flex h-9 w-9 items-center justify-center hover:bg-muted" aria-label="Locate Kolkata"
+          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
+          aria-label="Locate Kolkata"
         >
           <LocateFixed className="h-4 w-4" />
         </button>
       </div>
 
-      {/* Legend — floating glass */}
+      {/* Legend  fixed categories, not decimal-sensitive */}
       <div className="absolute bottom-4 left-3 flex items-center gap-1.5 rounded-full border bg-card/90 px-3 py-1.5 shadow-lg backdrop-blur">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Risk</span>
+        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+          {layer === "risk"
+            ? "Risk"
+            : layer === "thermal"
+              ? "Thermal"
+              : layer === "wbgt"
+                ? "WBGT"
+                : layer === "hi"
+                  ? "H-Index"
+                  : layer === "exposure"
+                    ? "Exposure"
+                    : "Vuln"}
+        </span>
         {["#14b8a6", "#eab308", "#f97316", "#ef4444", "#991b1b"].map((c, i) => (
-          <span key={c} className="h-2.5 w-6 rounded-full" style={{ background: c }} />
+          <span
+            key={c}
+            className="h-2.5 w-6 rounded-full"
+            style={{ background: c }}
+          />
         ))}
-        <span className="ml-1 hidden text-[10px] text-muted-foreground sm:inline">Low → Extreme</span>
+        <span className="ml-1 hidden text-[10px] tabular-nums text-muted-foreground sm:inline">
+          {layer === "wbgt"
+            ? "15°→40°"
+            : layer === "hi"
+              ? "20°→55°"
+              : "Low → Extreme"}
+        </span>
       </div>
 
       {/* Ctrl+scroll hint */}
@@ -297,7 +596,7 @@ export function KolkataMap({
         Hold Ctrl to zoom · Drag to pan
       </div>
 
-      {/* Hover tooltip — small popup summary */}
+      {/* Hover tooltip  small popup summary */}
       <AnimatePresence>
         {tip && !isMobile && (
           <motion.div
@@ -311,16 +610,38 @@ export function KolkataMap({
             <p className="text-xs font-extrabold leading-none">
               {getWardDisplayName(tip.cell.ward, tip.cell.wardName)}
             </p>
-            {(() => { const loc = getWardLocality(tip.cell.ward); return loc ? <p className="mt-0.5 text-[11px] font-medium text-primary">{loc}</p> : null; })()}
-            {tip.cell.wardName && <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{tip.cell.wardName}</p>}
+            {(() => {
+              const loc = getWardLocality(tip.cell.ward);
+              return loc ? (
+                <p className="mt-0.5 text-[11px] font-medium text-primary">
+                  {loc}
+                </p>
+              ) : null;
+            })()}
+            {tip.cell.wardName && (
+              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                {tip.cell.wardName}
+              </p>
+            )}
             <div className="mt-2 flex items-center gap-2">
-              <span className="text-xl font-black tabular-nums leading-none">{tip.cell.riskScore !== null ? tip.cell.riskScore.toFixed(3) : "—"}</span>
+              <span className="text-xl font-black tabular-nums leading-none">
+                {tip.cell.riskScore !== null
+                  ? tip.cell.riskScore.toFixed(3)
+                  : ""}
+              </span>
               {tip.cell.category && <RiskBadge category={tip.cell.category} />}
             </div>
             <p className="mt-1.5 text-[11px] tabular-nums text-muted-foreground">
-              WBGT {tip.cell.wbgt !== null ? `${tip.cell.wbgt.toFixed(1)}°C` : "—"} · Pop {tip.cell.population !== null ? tip.cell.population.toLocaleString("en-IN") : "—"}
+              WBGT{" "}
+              {tip.cell.wbgt !== null ? `${tip.cell.wbgt.toFixed(1)}°C` : ""} ·
+              Pop{" "}
+              {tip.cell.population !== null
+                ? tip.cell.population.toLocaleString("en-IN")
+                : ""}
             </p>
-            <p className="mt-0.5 text-[10px] font-medium text-primary">Click for full telemetry →</p>
+            <p className="mt-0.5 text-[10px] font-medium text-primary">
+              Click for full telemetry →
+            </p>
           </motion.div>
         )}
       </AnimatePresence>

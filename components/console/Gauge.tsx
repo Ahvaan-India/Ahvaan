@@ -5,7 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Metropolitan Heat Load radial gauge: mean metro risk × 100 plus the
- * watch-level badge. Pure display — the level bands live in lib/console.
+ * watch-level badge. Pure display  the level bands live in lib/console.
  */
 export function Gauge({
   load,
@@ -29,15 +29,37 @@ export function Gauge({
   const frac = Math.max(0, Math.min(load, 100)) / 100;
   const R = 52;
   const C = 2 * Math.PI * R;
-  const color = frac >= 0.7 ? "#991b1b" : frac >= 0.5 ? "#ef4444" : frac >= 0.3 ? "#f97316" : "#14b8a6";
+  const color =
+    frac >= 0.7
+      ? "#991b1b"
+      : frac >= 0.5
+        ? "#ef4444"
+        : frac >= 0.3
+          ? "#f97316"
+          : "#14b8a6";
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Metropolitan Heat Load</CardTitle>
       </CardHeader>
       <CardContent className="flex items-center gap-4">
-        <svg width="130" height="130" viewBox="0 0 130 130" role="img" aria-label={`Heat load ${load} of 100`}>
-          <circle cx="65" cy="65" r={R} fill="none" strokeWidth="12" className="stroke-border" stroke="currentColor" opacity={0.2} />
+        <svg
+          width="130"
+          height="130"
+          viewBox="0 0 130 130"
+          role="img"
+          aria-label={`Heat load ${load} of 100`}
+        >
+          <circle
+            cx="65"
+            cy="65"
+            r={R}
+            fill="none"
+            strokeWidth="12"
+            className="stroke-border"
+            stroke="currentColor"
+            opacity={0.2}
+          />
           <circle
             cx="65"
             cy="65"
@@ -50,10 +72,24 @@ export function Gauge({
             strokeDashoffset={C * (1 - frac)}
             transform="rotate(-90 65 65)"
           />
-          <text x="65" y="62" textAnchor="middle" fontSize="26" fontWeight="800" fill="currentColor">
+          <text
+            x="65"
+            y="62"
+            textAnchor="middle"
+            fontSize="26"
+            fontWeight="800"
+            fill="currentColor"
+          >
             {load}
           </text>
-          <text x="65" y="80" textAnchor="middle" fontSize="11" fill="currentColor" opacity={0.7}>
+          <text
+            x="65"
+            y="80"
+            textAnchor="middle"
+            fontSize="11"
+            fill="currentColor"
+            opacity={0.7}
+          >
             / 100
           </text>
         </svg>

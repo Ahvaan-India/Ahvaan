@@ -9,7 +9,7 @@ import type { Telemetry } from "./TelemetryPanel";
 /**
  * Ward heatmap popover: five sub-cards for the hovered/selected ward.
  * Note: the engine has no mortality model (see disclaimer), so the fifth
- * tile shows the composite risk score — never a fabricated mortality %.
+ * tile shows the composite risk score  never a fabricated mortality %.
  */
 export function WardPopover({ telemetry }: { telemetry: Telemetry | null }) {
   if (!telemetry) {
@@ -34,33 +34,53 @@ export function WardPopover({ telemetry }: { telemetry: Telemetry | null }) {
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm">
-          {telemetry.ward !== null ? `Ward ${telemetry.ward}` : `Location ${telemetry.wardId}`}
+          {telemetry.ward !== null
+            ? `Ward ${telemetry.ward}`
+            : `Location ${telemetry.wardId}`}
           {telemetry.risk && (
             <span className="ml-2 tabular-nums text-muted-foreground">
-              risk {telemetry.risk.value.toFixed(3)} · {telemetry.risk.displayCategory}
+              risk {telemetry.risk.value.toFixed(3)} ·{" "}
+              {telemetry.risk.displayCategory}
             </span>
           )}
         </CardTitle>
       </CardHeader>
       <CardContent className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <SubCard icon={Thermometer} label="Dry Bulb Temp"
-          value={m.temp !== null ? m.temp.toFixed(1) : "—"}
+        <SubCard
+          icon={Thermometer}
+          label="Dry Bulb Temp"
+          value={m.temp !== null ? m.temp.toFixed(1) : ""}
           unit={m.temp !== null ? "°C" : undefined}
-          qualifier={m.qualifiers.temp} />
-        <SubCard icon={Wind} label="Real Feel"
-          value={m.realFeel !== null ? m.realFeel.toFixed(1) : "—"}
-          unit={m.realFeel !== null ? "°C" : undefined} />
-        <SubCard icon={Activity} label="WBGT"
-          value={telemetry.risk ? telemetry.risk.wbgt.toFixed(1) : "—"}
-          unit={telemetry.risk ? "°C" : undefined} />
-        <SubCard icon={HeartPulse} label="Mortality Index"
-          value={mortality ? String(mortality.index) : "—"}
+          qualifier={m.qualifiers.temp}
+        />
+        <SubCard
+          icon={Wind}
+          label="Real Feel"
+          value={m.realFeel !== null ? m.realFeel.toFixed(1) : ""}
+          unit={m.realFeel !== null ? "°C" : undefined}
+        />
+        <SubCard
+          icon={Activity}
+          label="WBGT"
+          value={telemetry.risk ? telemetry.risk.wbgt.toFixed(1) : ""}
+          unit={telemetry.risk ? "°C" : undefined}
+        />
+        <SubCard
+          icon={HeartPulse}
+          label="Mortality Index"
+          value={mortality ? String(mortality.index) : ""}
           unit={mortality ? "/100" : undefined}
-          qualifier={mortality?.band ?? null} />
-        <SubCard icon={Users} label="Population in Zone"
-          value={telemetry.demographics.totalPopulation.toLocaleString("en-IN")} />
-        <SubCard icon={Activity} label="Composite Risk"
-          value={telemetry.risk ? telemetry.risk.value.toFixed(3) : "—"}
+          qualifier={mortality?.band ?? null}
+        />
+        <SubCard
+          icon={Users}
+          label="Population in Zone"
+          value={telemetry.demographics.totalPopulation.toLocaleString("en-IN")}
+        />
+        <SubCard
+          icon={Activity}
+          label="Composite Risk"
+          value={telemetry.risk ? telemetry.risk.value.toFixed(3) : ""}
           qualifier={telemetry.risk?.displayCategory ?? null}
           qualifierTone={
             telemetry.risk?.displayCategory === "Extreme"
@@ -72,7 +92,8 @@ export function WardPopover({ telemetry }: { telemetry: Telemetry | null }) {
                   : telemetry.risk
                     ? "low"
                     : null
-          } />
+          }
+        />
       </CardContent>
     </Card>
   );

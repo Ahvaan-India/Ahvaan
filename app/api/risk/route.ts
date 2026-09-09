@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
  * GET /api/risk?bbox=minLong,minLat,maxLong,maxLat
  * Multi-location map/dashboard endpoint. Returns an array of the same
  * per-location RiskResponse payload (locations with data gaps are skipped
- * and reported in `errors` via the envelope below — the primary `data`
+ * and reported in `errors` via the envelope below  the primary `data`
  * array keeps the exact contract the frontend consumes).
  *
  * Short edge cache (s-maxage=300) since weather doesn't change
@@ -50,7 +50,10 @@ export async function GET(req: Request) {
         .filter((n) => Number.isInteger(n) && n > 0);
       if (locationIds.length === 0) {
         return NextResponse.json(
-          { error: "Invalid locationIds: must be comma-separated positive integers" },
+          {
+            error:
+              "Invalid locationIds: must be comma-separated positive integers",
+          },
           { status: 400 },
         );
       }
@@ -82,7 +85,9 @@ export async function GET(req: Request) {
           getWeatherWindow(loc.id, WEATHER_WINDOW_HOURS),
           getLatestPopulation(loc.id),
         ]);
-        data.push(buildRiskResponse({ location: loc, weatherRows, population }));
+        data.push(
+          buildRiskResponse({ location: loc, weatherRows, population }),
+        );
       } catch (err) {
         if (err instanceof DataGapError) {
           errors.push({ locationId: loc.id, error: err.detail });
@@ -98,8 +103,7 @@ export async function GET(req: Request) {
         status: 200,
         headers: {
           // Dashboard tiles can be 5-min stale; browsers always revalidate.
-          "Cache-Control":
-            "public, s-maxage=300, stale-while-revalidate=60",
+          "Cache-Control": "public, s-maxage=300, stale-while-revalidate=60",
         },
       },
     );

@@ -1,11 +1,8 @@
-import {
-  NIGHTTIME_RECOVERY,
-  PERSISTENCE_THRESHOLD,
-} from "./config";
+import { NIGHTTIME_RECOVERY, PERSISTENCE_THRESHOLD } from "./config";
 import { clip } from "./thermal";
 
 /**
- * Temporal dynamics. Pure functions — no I/O.
+ * Temporal dynamics. Pure functions  no I/O.
  *
  * NOTE on spec gap: the PDF states P = f(S_t-1 … S_t-72) without specifying
  * f. The implementation below is an ENGINEERING CHOICE (see config.ts):
@@ -41,7 +38,7 @@ export function computePersistence(
  * observed in [startHour, endHour) per night (in the given timeZone, default
  * UTC for backward compat), average those minima across nights, then
  * normalize against the comfort band. Returns 0 when no overnight readings
- * exist (no evidence of failed recovery — flagged by the caller via
+ * exist (no evidence of failed recovery  flagged by the caller via
  * row-coverage confidence, not by inventing heat).
  */
 export function computeNighttimeRecovery(

@@ -1,4 +1,4 @@
-import { and, asc, desc, gte, lte, eq, sql, ne } from "drizzle-orm";
+import { and, asc, desc, gte, lte, eq, sql } from "drizzle-orm";
 import { getDb } from "./index";
 import {
   alertDeliveriesTable,
@@ -12,7 +12,7 @@ import { DataGapError } from "./errors";
 import { WEATHER_WINDOW_HOURS } from "../heatshield/config";
 
 /**
- * Parameterized Drizzle queries — no raw string SQL.
+ * Parameterized Drizzle queries  no raw string SQL.
  * All functions are thin over the Drizzle client so they stay mockable in
  * route tests (inject a fake db via the optional `db` param).
  */
@@ -60,7 +60,10 @@ export async function getWeatherWindow(
 }
 
 /** Latest census row for a location (population isn't hourly). Null if none. */
-export async function getLatestPopulation(locationId: number, db: Db = getDb()) {
+export async function getLatestPopulation(
+  locationId: number,
+  db: Db = getDb(),
+) {
   const rows = await db
     .select()
     .from(populationTable)
@@ -73,7 +76,7 @@ export async function getLatestPopulation(locationId: number, db: Db = getDb()) 
 /**
  * Bounded weather slice (ascending). Used by the 5-day forecast endpoint to
  * pull trailing history (for persistence) + upcoming model days in one pass.
- * Returns [] (no throw) — the caller decides what an empty slice means.
+ * Returns [] (no throw)  the caller decides what an empty slice means.
  */
 export async function getWeatherRange(
   locationId: number,
@@ -294,7 +297,9 @@ export interface ActiveAlertRow {
   long: number | null;
 }
 
-export async function getActiveAlerts(db: Db = getDb()): Promise<ActiveAlertRow[]> {
+export async function getActiveAlerts(
+  db: Db = getDb(),
+): Promise<ActiveAlertRow[]> {
   const rows = await db
     .select({
       alert: alertsTable,
@@ -304,7 +309,10 @@ export async function getActiveAlerts(db: Db = getDb()): Promise<ActiveAlertRow[
       long: locationsTable.long,
     })
     .from(alertsTable)
-    .leftJoin(populationTable, eq(populationTable.locationId, alertsTable.wardId))
+    .leftJoin(
+      populationTable,
+      eq(populationTable.locationId, alertsTable.wardId),
+    )
     .leftJoin(locationsTable, eq(locationsTable.id, alertsTable.wardId))
     .where(eq(alertsTable.status, "active"))
     .orderBy(desc(alertsTable.riskScore));
@@ -312,7 +320,11 @@ export async function getActiveAlerts(db: Db = getDb()): Promise<ActiveAlertRow[
 }
 
 /** Alert/event history for one ward (newest first). Includes resolved. */
-export async function getAlertHistory(wardId: number, limit = 10, db: Db = getDb()) {
+export async function getAlertHistory(
+  wardId: number,
+  limit = 10,
+  db: Db = getDb(),
+) {
   return db
     .select()
     .from(alertsTable)

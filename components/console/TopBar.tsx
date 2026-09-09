@@ -2,28 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Bell,
-  LayoutDashboard,
-  BarChart3,
-  Map,
-  Search,
-  Flame,
-  X,
-} from "lucide-react";
+import { Bell, BarChart3, Map, Search, Flame, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { getWardDisplayName, getWardLocality, matchesWardQuery } from "@/lib/geo/wardNames";
-import { cn } from "@/lib/utils";
+import {
+  getWardDisplayName,
+  getWardLocality,
+  matchesWardQuery,
+} from "@/lib/geo/wardNames";
 import { useState, useMemo } from "react";
 
 const NAV = [
   { label: "Map", icon: Map, href: "/", isMap: true },
-  { label: "Analytics", icon: BarChart3, href: "#analytics", action: "analytics" as const },
+  {
+    label: "Analytics",
+    icon: BarChart3,
+    href: "#analytics",
+    action: "analytics" as const,
+  },
 ];
 
 /**
- * Clean, minimal navbar — single 56px bar, no double rows.
+ * Clean, minimal navbar  single 56px bar, no double rows.
  * Center search (map page) is Google-Maps-like, with clear action.
  */
 export function TopBar({
@@ -46,7 +46,11 @@ export function TopBar({
   searchQuery?: string;
   onSearchChange?: (v: string) => void;
   onAnalyticsOpen?: () => void;
-  wards?: Array<{ ward: number | null; wardName: string | null; wardId: number }>;
+  wards?: Array<{
+    ward: number | null;
+    wardName: string | null;
+    wardId: number;
+  }>;
   onSelectWard?: (wardId: number) => void;
 }) {
   const pathname = usePathname();
@@ -57,74 +61,69 @@ export function TopBar({
     if (!wards || !searchQuery?.trim()) return [];
     const q = searchQuery.trim();
     return wards
-      .filter((w) => matchesWardQuery(w.ward, w.wardName, getWardLocality(w.ward), q))
+      .filter((w) =>
+        matchesWardQuery(w.ward, w.wardName, getWardLocality(w.ward), q),
+      )
       .slice(0, 8);
   }, [wards, searchQuery]);
   const showDropdown = focused && suggestions.length > 0 && isMap;
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
-      <div className="mx-auto flex h-[56px] max-w-[1600px] items-center gap-3 px-3 sm:px-4 lg:px-6">
-        {/* Brand */}
-        <Link
-          href="/"
-          className="flex shrink-0 items-center gap-2.5 transition-opacity hover:opacity-80"
-        >
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-red-600 to-orange-500 text-white shadow-sm">
-            <Flame className="h-4 w-4" />
-          </span>
-          <span className="hidden sm:flex flex-col leading-none">
-            <span className="text-[14px] font-extrabold tracking-tight">
-              Ahvaan
+      <div className="relative mx-auto flex h-[56px] max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
+        {/* Left: Brand + Nav */}
+        <div className="flex items-center gap-3 justify-self-start">
+          <Link
+            href="/"
+            className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+          >
+            <img src="/logo.svg" alt="Ahvaan logo" width={32} height={32} className="h-8 w-8 rounded-lg shadow-sm" />
+            <span className="hidden sm:flex flex-col leading-none">
+              <span className="text-[14px] font-extrabold tracking-tight">Ahvaan</span>
+              <span className="text-[10px] font-semibold tracking-widest text-muted-foreground">KOLKATA</span>
             </span>
-            <span className="text-[10px] font-semibold tracking-widest text-muted-foreground">
-              KOLKATA
-            </span>
-          </span>
-        </Link>
-
-        <div className="hidden h-6 w-px bg-border sm:block" />
-
-        {/* Nav pills — Map link + Analytics popup trigger */}
-        <nav className="flex items-center gap-1">
-          {NAV.map((n) => {
-            const isAnalytics = "action" in n;
-            if (isAnalytics) {
+          </Link>
+          <div className="hidden h-6 w-px bg-border sm:block" />
+          <nav className="hidden items-center gap-1 sm:flex">
+            {NAV.map((n) => {
+              const isAnalytics = "action" in n;
+              if (isAnalytics) {
+                return (
+                  <button
+                    key={n.label}
+                    onClick={onAnalyticsOpen}
+                    className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <n.icon className="h-3.5 w-3.5" />
+                    {n.label}
+                  </button>
+                );
+              }
               return (
-                <button
+                <Link
                   key={n.label}
-                  onClick={onAnalyticsOpen}
-                  className="inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  href={n.href}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
                 >
                   <n.icon className="h-3.5 w-3.5" />
                   {n.label}
-                </button>
+                </Link>
               );
-            }
-            return (
-              <Link
-                key={n.label}
-                href={n.href}
-                className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
-              >
-                <n.icon className="h-3.5 w-3.5" />
-                {n.label}
-              </Link>
-            );
-          })}
-        </nav>
+            })}
+          </nav>
+        </div>
 
-        {/* Center search — only on map page, like Google Maps */}
-        {isMap && onSearchChange && (
-          <div className="mx-2 hidden max-w-md flex-1 items-center md:flex lg:mx-6">
-            <div className="relative flex w-full items-center">
+        {/* Centre: Search — truly centred via absolute, always visible */}
+        {isMap && onSearchChange ? (
+          <div className="absolute left-1/2 top-1/2 flex min-w-0 max-w-[280px] -translate-x-1/2 -translate-y-1/2 sm:max-w-md sm:w-full">
+            <div className="relative flex w-full max-w-md items-center">
               <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
               <input
                 value={searchQuery ?? ""}
                 onChange={(e) => onSearchChange(e.target.value)}
                 onFocus={() => setFocused(true)}
                 onBlur={() => setTimeout(() => setFocused(false), 180)}
-                placeholder="Search ward or locality (e.g. 42 · Naktala, Burrabazar)…"
+                placeholder="Search ward…"
                 className="h-9 w-full rounded-full border bg-muted/40 py-2 pl-9 pr-9 text-sm placeholder:text-muted-foreground focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
               {searchQuery ? (
@@ -143,7 +142,11 @@ export function TopBar({
                     return (
                       <button
                         key={w.wardId}
-                        onMouseDown={(e) => { e.preventDefault(); onSelectWard?.(w.wardId); setFocused(false); }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          onSelectWard?.(w.wardId);
+                          setFocused(false);
+                        }}
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent"
                       >
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
@@ -160,10 +163,10 @@ export function TopBar({
               )}
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Right cluster */}
-        <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
+        <div className="flex items-center gap-3">
           <div className="hidden items-center gap-2 xl:flex">
             <span className="rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
               {watchLabel}
@@ -200,53 +203,6 @@ export function TopBar({
           </Button>
         </div>
       </div>
-
-       {/* Mobile search row — only when on map */}
-      {isMap && onSearchChange && (
-        <div className="border-t bg-card px-3 py-2 md:hidden">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={searchQuery ?? ""}
-              onChange={(e) => onSearchChange(e.target.value)}
-              onFocus={() => setFocused(true)}
-              onBlur={() => setTimeout(() => setFocused(false), 180)}
-              placeholder="Search ward or locality…"
-              className="h-9 w-full rounded-full border bg-muted/40 py-2 pl-9 pr-9 text-sm focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => onSearchChange("")}
-                className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full hover:bg-muted"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-            {showDropdown && (
-              <div className="absolute left-0 right-0 top-[44px] z-30 max-h-[300px] overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
-                {suggestions.map((w) => {
-                  const loc = getWardLocality(w.ward);
-                  return (
-                    <button
-                      key={w.wardId}
-                      onMouseDown={(e) => { e.preventDefault(); onSelectWard?.(w.wardId); setFocused(false); }}
-                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent"
-                    >
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
-                        {w.ward ?? "·"}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-sm font-semibold leading-none">{getWardDisplayName(w.ward, w.wardName)}</span>
-                        {loc && <span className="block text-xs text-muted-foreground">{loc}</span>}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </header>
   );
 }

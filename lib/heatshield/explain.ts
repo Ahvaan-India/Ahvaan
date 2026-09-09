@@ -1,7 +1,7 @@
 import { SCIENCE_ENGINE_VERSION } from "./config";
 
 /**
- * Ahvaan explanation engine — top drivers, plain-language summary, warnings.
+ * Ahvaan explanation engine  top drivers, plain-language summary, warnings.
  * Pure functions, no I/O. Mirrors the LIVE_WEATHER_END_TO_END reference
  * shape (`explanation.top_drivers/summary`, `warnings`) so the UI can render
  * "why is risk HIGH?" without re-implementing thresholds in the frontend.
@@ -12,7 +12,7 @@ import { SCIENCE_ENGINE_VERSION } from "./config";
  */
 
 export const WARNINGS: string[] = [
-  "UTCI not implemented in this MVP: requires a validated mean-radiant-temperature estimate and regression coefficients; utci is always null and never approximated from radiation.",
+  "UTCI is estimated via Bröde et al. polynomial (pythermalcomfort) from Ta, Tmrt (radiation-derived), wind and humidity; flagged as utci_estimated when Tmrt is inferred from shortwave radiation.",
   "WBGT uses a shaded/outdoor approximation from air temperature and humidity only; it does not include solar radiation or wind loading.",
 ];
 
@@ -76,16 +76,13 @@ export function computeTopDrivers(input: DriverInput): DriverCode[] {
     found.some((f) => f.code === "HOT_NIGHT")
   )
     found.push({ code: "LOW_RECOVERY", rank: 3 });
-  if (input.thermalStress >= 0.6)
-    found.push({ code: "HIGH_THERMAL", rank: 4 });
+  if (input.thermalStress >= 0.6) found.push({ code: "HIGH_THERMAL", rank: 4 });
   if (input.wbgt >= 32 || input.heatIndex >= 41)
     found.push({ code: "CURRENT_DANGER", rank: 5 });
-  if (input.exposure >= 0.6)
-    found.push({ code: "HIGH_EXPOSURE", rank: 6 });
+  if (input.exposure >= 0.6) found.push({ code: "HIGH_EXPOSURE", rank: 6 });
   if (input.vulnerability >= 0.4)
     found.push({ code: "HIGH_VULNERABILITY", rank: 7 });
-  if (input.confidence < 0.5)
-    found.push({ code: "LOW_CONFIDENCE", rank: 8 });
+  if (input.confidence < 0.5) found.push({ code: "LOW_CONFIDENCE", rank: 8 });
 
   return found
     .sort((a, b) => a.rank - b.rank)
@@ -93,10 +90,7 @@ export function computeTopDrivers(input: DriverInput): DriverCode[] {
     .map((f) => f.code);
 }
 
-export function buildSummary(
-  drivers: DriverCode[],
-  category: string,
-): string {
+export function buildSummary(drivers: DriverCode[], category: string): string {
   if (drivers.length === 0) {
     return `Risk is ${category.toLowerCase()}: no dominant heat drivers right now; conditions are within typical bounds.`;
   }

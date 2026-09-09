@@ -39,7 +39,7 @@ export function RiskCard({ locationId }: { locationId: number }) {
   return (
     <div className="card">
       <h2>
-        Location {data.locationId} — {data.compositeRisk.category}
+        Location {data.locationId} {data.compositeRisk.category}
       </h2>
       <p>
         Composite risk: <strong>{data.compositeRisk.value.toFixed(3)}</strong>{" "}

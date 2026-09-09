@@ -6,7 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/alerts/deliveries?alertId=… — broadcast history for one alert.
+ * GET /api/alerts/deliveries?alertId=…  broadcast history for one alert.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -37,12 +37,15 @@ export async function GET(req: Request) {
     );
   } catch (err) {
     console.error("GET /api/alerts/deliveries failed:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
 /**
- * POST /api/alerts/deliveries — Send WhatsApp alert details via Avhaan API / Meta API
+ * POST /api/alerts/deliveries  Send WhatsApp alert details via Avhaan API / Meta API
  * or prototype fallback, and log the delivery status to the database.
  */
 export async function POST(req: Request) {
@@ -66,15 +69,24 @@ export async function POST(req: Request) {
     );
   }
   if (!body.messageText || body.messageText.trim().length === 0) {
-    return NextResponse.json({ error: "messageText is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "messageText is required" },
+      { status: 400 },
+    );
   }
   if (body.alertId !== undefined && body.alertId !== null) {
     if (!Number.isInteger(body.alertId) || body.alertId <= 0) {
-      return NextResponse.json({ error: "alertId must be a positive integer" }, { status: 400 });
+      return NextResponse.json(
+        { error: "alertId must be a positive integer" },
+        { status: 400 },
+      );
     }
     const alert = await getAlertById(body.alertId);
     if (!alert) {
-      return NextResponse.json({ error: "Alert not found", alertId: body.alertId }, { status: 404 });
+      return NextResponse.json(
+        { error: "Alert not found", alertId: body.alertId },
+        { status: 404 },
+      );
     }
   }
 
@@ -117,6 +129,9 @@ export async function POST(req: Request) {
     );
   } catch (err) {
     console.error("POST /api/alerts/deliveries failed:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

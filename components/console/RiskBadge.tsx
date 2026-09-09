@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 /**
  * Single severity badge used everywhere risk/alarm state appears (alert
  * cards, trajectory, detail header, popover). Small solid fill on the
- * 5-step risk scale — never outlined, never reused for non-risk meaning.
+ * 5-step risk scale  never outlined, never reused for non-risk meaning.
  */
 export function RiskBadge({
   category,
@@ -19,7 +19,14 @@ export function RiskBadge({
 }) {
   const key = category === "EXTREME" ? "VERY_HIGH" : category;
   const text =
-    label ?? (key === "VERY_HIGH" ? "Extreme" : key === "HIGH" ? "High" : key === "MODERATE" ? "Moderate" : "Low");
+    label ??
+    (key === "VERY_HIGH"
+      ? "Extreme"
+      : key === "HIGH"
+        ? "High"
+        : key === "MODERATE"
+          ? "Moderate"
+          : "Low");
   return (
     <span
       className={cn(

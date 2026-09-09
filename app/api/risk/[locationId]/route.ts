@@ -17,11 +17,11 @@ interface RouteParams {
 
 /**
  * GET /api/risk/[locationId]
- * Per-location detail endpoint — stays fresh (no-store).
+ * Per-location detail endpoint  stays fresh (no-store).
  *  200 → RiskResponse
  *  400 → invalid locationId
  *  404 → unknown location
- *  422 → DataGapError (insufficient data, explicit — never silent garbage)
+ *  422 → DataGapError (insufficient data, explicit  never silent garbage)
  *  500 → unexpected
  */
 export async function GET(_req: Request, { params }: RouteParams) {
@@ -30,7 +30,10 @@ export async function GET(_req: Request, { params }: RouteParams) {
 
   if (!Number.isInteger(locationId) || locationId <= 0) {
     return NextResponse.json(
-      { error: "Invalid locationId: must be a positive integer", locationId: raw },
+      {
+        error: "Invalid locationId: must be a positive integer",
+        locationId: raw,
+      },
       { status: 400 },
     );
   }

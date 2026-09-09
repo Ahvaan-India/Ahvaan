@@ -1,5 +1,5 @@
 /**
- * Ahvaan — ward-aware timezone utilities.
+ * Ahvaan  ward-aware timezone utilities.
  *
  * Kolkata-only deployment: every ward resolves to Asia/Kolkata (UTC+5:30,
  * no DST). The helpers are written generally so a future multi-city rollout
@@ -46,9 +46,10 @@ export function timezoneForLocation(
 }
 
 /** Thin wrapper: ward rows carry lat/long, so ward tz == location tz. */
-export function timezoneForWard(
-  ward: { lat: number; long: number },
-): { timeZone: string; isEstimated: boolean } {
+export function timezoneForWard(ward: { lat: number; long: number }): {
+  timeZone: string;
+  isEstimated: boolean;
+} {
   return timezoneForLocation(ward.lat, ward.long);
 }
 
@@ -92,7 +93,10 @@ export function localDayKey(date: Date, timeZone: string): string {
 }
 
 /** UTC offset label (e.g. "UTC+5:30") for the location bar. */
-export function utcOffsetLabel(timeZone: string, at: Date = new Date()): string {
+export function utcOffsetLabel(
+  timeZone: string,
+  at: Date = new Date(),
+): string {
   const dtf = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hour12: false,

@@ -11,7 +11,7 @@ const archivo = Archivo({
 
 export const metadata: Metadata = {
   title: "Ahvaan",
-  description: "Ahvaan — Kolkata heat-risk command center",
+  description: "Ahvaan  Kolkata heat-risk command center",
 };
 
 export default function RootLayout({

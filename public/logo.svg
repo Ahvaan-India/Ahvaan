@@ -1,0 +1,22 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dc2626"/>
+      <stop offset="100%" stop-color="#f97316"/>
+    </linearGradient>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef2f2"/>
+      <stop offset="100%" stop-color="#fff7ed"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="104" fill="url(#g)" />
+  <!-- Flame -->
+  <path d="M256 108 C 198 168, 156 212, 172 268 C 182 308, 212 332, 256 352 C 300 332, 330 308, 340 268 C 356 212, 314 168, 256 108 Z
+           M256 156 C 228 188, 208 216, 216 248 C 222 272, 236 288, 256 304 C 276 288, 290 272, 296 248 C 304 216, 284 188, 256 156 Z"
+        fill="white" fill-opacity="0.96"/>
+  <circle cx="256" cy="258" r="18" fill="white" opacity="0.95"/>
+  <!-- Text Ahvaan -->
+  <text x="256" y="410" text-anchor="middle" font-family="Archivo, system-ui, sans-serif" font-size="54" font-weight="800" fill="white" letter-spacing="-1">Ahvaan</text>
+  <text x="256" y="434" text-anchor="middle" font-family="Archivo, system-ui, sans-serif" font-size="13" font-weight="700" fill="white" opacity="0.88" letter-spacing="6">KOLKATA</text>
+</svg>
