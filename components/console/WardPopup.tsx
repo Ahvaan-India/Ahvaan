@@ -32,6 +32,7 @@ export function WardPopup({
   wardName,
   selectedCell,
   telemetry,
+  onDownload,
   children,
 }: Props) {
   if (!open || wardId === null) return null;
@@ -70,6 +71,10 @@ export function WardPopup({
                   <p className="mt-1 text-xs font-medium text-muted-foreground">Kolkata (M Corp.)</p>
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
+                  <Button variant="outline" size="sm" onClick={onDownload} aria-label="Download ward data" className="h-8 gap-1.5 rounded-full px-3 text-xs font-semibold">
+                    <Download className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">Download</span>
+                  </Button>
                   <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close popup" className="h-8 w-8 rounded-full">
                     <X className="h-4 w-4" />
                   </Button>
