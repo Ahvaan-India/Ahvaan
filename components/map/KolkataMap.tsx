@@ -245,6 +245,16 @@ export function KolkataMap({
     ox: number;
     oy: number;
   } | null>(null);
+  // Active pointers for pinch gestures + tap tracking for double-tap zoom
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<null | {
+    startDist: number;
+    startZoom: number;
+    startPan: { x: number; y: number };
+    startMid: { x: number; y: number };
+  }>(null);
+  const downRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const lastTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
   const [tip, setTip] = useState<{
     x: number;
     y: number;
@@ -285,11 +295,82 @@ export function KolkataMap({
     );
   }, []);
 
+  // Zoom keeping the point under (clientX, clientY) fixed — proper map feel
+  const zoomAtPoint = useCallback(
+    (clientX: number, clientY: number, newZoom: number) => {
+      const rect = wrapRef.current?.getBoundingClientRect();
+      if (!rect || rect.width === 0 || rect.height === 0) {
+        setZoom(newZoom);
+        return;
+      }
+      const z1 = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
+      const z2 = Math.min(MAX_Z, Math.max(MIN_Z, newZoom));
+      if (z1 === z2) return;
+      const fx = (clientX - rect.left) / rect.width;
+      const fy = (clientY - rect.top) / rect.height;
+      const vbW1 = W / z1;
+      const vbH1 = H / z1;
+      const worldX = W / 2 - vbW1 / 2 - pan.x + fx * vbW1;
+      const worldY = H / 2 - vbH1 / 2 - pan.y + fy * vbH1;
+      const vbW2 = W / z2;
+      const vbH2 = H / z2;
+      setZoom(z2);
+      setPan({
+        x: W / 2 - vbW2 / 2 + fx * vbW2 - worldX,
+        y: H / 2 - vbH2 / 2 + fy * vbH2 - worldY,
+      });
+    },
+    [zoom, pan],
+  );
+
   const handlePointerDown = (e: React.PointerEvent) => {
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    downRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
+    // Two fingers → start pinch, cancel single-finger drag
+    if (pointersRef.current.size === 2) {
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      pinchRef.current = {
+        startDist: dist,
+        startZoom: zoom,
+        startPan: { ...pan },
+        startMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+      };
+      setDrag(null);
+      setTip(null);
+      return;
+    }
     // Don't capture - let polygon clicks through; just track drag start
     setDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
   };
   const handlePointerMove = (e: React.PointerEvent) => {
+    // Pinch: zoom around midpoint + pan with midpoint drift
+    if (pointersRef.current.has(e.pointerId)) {
+      pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (pointersRef.current.size === 2 && pinchRef.current) {
+      const [a, b] = [...pointersRef.current.values()];
+      const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      const p = pinchRef.current;
+      const rect = wrapRef.current?.getBoundingClientRect();
+      const z2 = Math.min(
+        MAX_Z,
+        Math.max(MIN_Z, p.startZoom * (dist / p.startDist)),
+      );
+      setZoom(+z2.toFixed(2));
+      if (rect && rect.width > 0) {
+        // Pan follows midpoint drift, scaled to viewBox units at new zoom
+        const scale = W / z2 / rect.width;
+        setPan({
+          x: p.startPan.x + (mid.x - p.startMid.x) * scale,
+          y: p.startPan.y + (mid.y - p.startMid.y) * scale,
+        });
+      } else {
+        setPan({ ...p.startPan });
+      }
+      return;
+    }
     if (!drag || !wrapRef.current) return;
     const dx = e.clientX - drag.sx;
     const dy = e.clientY - drag.sy;
@@ -303,8 +384,35 @@ export function KolkataMap({
       y: drag.oy + dy * scaleY,
     });
   };
-  const handlePointerUp = () => {
+  const endPointer = (e: React.PointerEvent) => {
+    pointersRef.current.delete(e.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    // Double-tap to zoom in (touch), anchored at tap point
+    const down = downRef.current;
+    if (down && pointersRef.current.size === 0) {
+      const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+      const dt = Date.now() - down.t;
+      if (moved < 10 && dt < 400) {
+        const last = lastTapRef.current;
+        if (
+          last &&
+          Date.now() - last.t < 350 &&
+          Math.hypot(e.clientX - last.x, e.clientY - last.y) < 40
+        ) {
+          lastTapRef.current = null;
+          zoomAtPoint(e.clientX, e.clientY, zoom + 1);
+        } else {
+          lastTapRef.current = { t: Date.now(), x: e.clientX, y: e.clientY };
+        }
+      } else {
+        lastTapRef.current = null;
+      }
+    }
+    downRef.current = null;
     setDrag(null);
+  };
+  const handlePointerUp = (e: React.PointerEvent) => {
+    endPointer(e);
   };
 
   const normalizedSearch = (searchQuery ?? "").trim().toLowerCase();
@@ -348,6 +456,7 @@ export function KolkataMap({
       className="relative h-full w-full overflow-hidden bg-[#eef2f7] dark:bg-[#0f172a] touch-none select-none"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onPointerCancel={endPointer}
       onPointerLeave={() => {
         onHover(null);
         setTip(null);
@@ -358,6 +467,10 @@ export function KolkataMap({
       }}
       onPointerDown={handlePointerDown}
       onWheel={handleWheel}
+      onDoubleClick={(e) => {
+        // Desktop double-click to zoom in, anchored at cursor
+        zoomAtPoint(e.clientX, e.clientY, zoom + 1);
+      }}
       style={{
         cursor: drag ? "grabbing" : "grab",
         willChange: drag ? "transform" : undefined,
@@ -537,7 +650,11 @@ export function KolkataMap({
       {/* Zoom controls  Google Maps style vertical stack */}
       <div className="absolute bottom-4 right-3 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform">
         <button
-          onClick={() => setZoom((v) => Math.min(MAX_Z, +(v + 0.6).toFixed(1)))}
+          onClick={() => {
+            const rect = wrapRef.current?.getBoundingClientRect();
+            if (rect) zoomAtPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, zoom + 0.6);
+            else setZoom((v) => Math.min(MAX_Z, +(v + 0.6).toFixed(1)));
+          }}
           className="flex h-9 w-9 items-center justify-center hover:bg-muted"
           aria-label="Zoom in"
         >
@@ -545,7 +662,11 @@ export function KolkataMap({
         </button>
         <div className="h-px bg-border" />
         <button
-          onClick={() => setZoom((v) => Math.max(MIN_Z, +(v - 0.6).toFixed(1)))}
+          onClick={() => {
+            const rect = wrapRef.current?.getBoundingClientRect();
+            if (rect) zoomAtPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, zoom - 0.6);
+            else setZoom((v) => Math.max(MIN_Z, +(v - 0.6).toFixed(1)));
+          }}
           className="flex h-9 w-9 items-center justify-center hover:bg-muted"
           aria-label="Zoom out"
           disabled={z <= MIN_Z + 0.01}
@@ -617,9 +738,9 @@ export function KolkataMap({
         </span>
       </div>
 
-      {/* Ctrl+scroll hint */}
+      {/* Scroll hint */}
       <div className="pointer-events-none absolute left-1/2 top-3 hidden -translate-x-1/2 rounded-full bg-foreground px-3 py-1 text-xs text-background opacity-0 transition-opacity peer-hover:opacity-100 md:block">
-        Hold Ctrl to zoom · Drag to pan
+        Scroll to zoom · Drag to pan · Double-click to zoom in
       </div>
 
       {/* Hover tooltip  small popup summary */}
