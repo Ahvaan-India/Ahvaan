@@ -219,6 +219,29 @@ export default function MapsPage() {
             ) : (
               <KolkataMap cells={filteredCells} selectedId={selectedId} hoveredId={hoveredId} onSelect={(id) => setSelectedId(id)} onHover={setHoveredId} searchQuery={deferredSearch} layer={layer} />
             )}
+            {/* Category pill — Active / Extreme / High / Moderate / Load */}
+            {summary && (
+              <div className="pointer-events-none absolute left-1/2 top-3 z-20 hidden -translate-x-1/2 sm:flex">
+                <div className="flex items-center gap-1.5 rounded-full border bg-card p-1.5 shadow-xl backdrop-blur">
+                  {[
+                    { label: "Low", v: summary.low, c: "#14b8a6", hint: "Wards in LOW band (risk < 0.30)" },
+                    { label: "Moderate", v: summary.moderate, c: "#eab308", hint: "Wards in MODERATE band (risk 0.30–0.50)" },
+                    { label: "High", v: summary.high, c: "#ef4444", hint: "Wards in HIGH band (risk 0.50–0.65)" },
+                    { label: "Extreme", v: summary.extreme, c: "#991b1b", hint: "Wards in VERY_HIGH band (risk ≥ 0.65)" },
+                  ].map((k) => (
+                    <span key={k.label} title={k.hint} className="flex cursor-help items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
+                      <span className="h-2 w-2 rounded-full" style={{ background: k.c }} />
+                      {k.label} <span className="font-black tabular-nums">{k.v}</span>
+                    </span>
+                  ))}
+                  <span title="Metropolitan Heat Load — mean ward risk × 100" className="flex cursor-help items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
+                    <Layers className="h-3.5 w-3.5 text-muted-foreground" />
+                    Load <span className="font-black tabular-nums">{summary.metroHeatLoad}</span>
+                    <span className="font-normal text-muted-foreground">/100</span>
+                  </span>
+                </div>
+              </div>
+            )}
             <button onClick={() => setControlsOpen(true)} className="absolute bottom-[172px] right-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border bg-card shadow-lg hover:bg-accent" aria-label="Map layers">
               <Layers className="h-4 w-4" />
             </button>

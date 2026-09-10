@@ -27,6 +27,7 @@ export async function GET() {
       const extreme = count((s) => s.snapshot.category === "VERY_HIGH");
       const high = count((s) => s.snapshot.category === "HIGH");
       const moderate = count((s) => s.snapshot.category === "MODERATE");
+      const low = count((s) => s.snapshot.category === "LOW");
       const meanRisk =
         latest.reduce((a, s) => a + s.snapshot.risk, 0) / latest.length;
       const watch = watchLevel(meanRisk);
@@ -82,6 +83,7 @@ export async function GET() {
         extreme,
         high,
         moderate,
+        low,
         deltas,
         metroHeatLoad: Math.round(meanRisk * 100),
         watch,
