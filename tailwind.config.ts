@@ -14,6 +14,12 @@ const config: Config = {
         sans: ["var(--font-sans)", "Archivo", "system-ui", "sans-serif"],
       },
       colors: {
+        risk: {
+          low: "hsl(var(--risk-low) / <alpha-value>)",
+          moderate: "hsl(var(--risk-moderate) / <alpha-value>)",
+          high: "hsl(var(--risk-high) / <alpha-value>)",
+          extreme: "hsl(var(--risk-extreme) / <alpha-value>)",
+        },
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

@@ -6,6 +6,8 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { X, MapPin, Thermometer, Droplet, Wind, Sun, Users, Flame, Layers, ChevronRight, Activity, HeartPulse, Download } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { getWardLocality } from "@/lib/geo/wardNames";
+import { cn } from "@/lib/utils";
+import { riskFillForCategory, riskPanelClass } from "@/lib/risk";
 import { TopBar } from "@/components/console/TopBar";
 import { LeftNav } from "@/components/layout/LeftNav";
 import { KolkataMap, type MapWard, RISK_COLORS } from "@/components/map/KolkataMap";
@@ -64,32 +66,27 @@ function WardDetailBody({ telemetry, forecast, selectedCell, selectedId }: any) 
           );
         })()}
       </div>
-      {telemetry.risk && (
-        <div className={
-          telemetry.risk.category === "VERY_HIGH"
-            ? "rounded-xl border bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900/50 p-3"
-            : telemetry.risk.category === "HIGH"
-              ? "rounded-xl border bg-orange-50 border-orange-200 dark:bg-orange-950/30 dark:border-orange-900/50 p-3"
-              : telemetry.risk.category === "MODERATE"
-                ? "rounded-xl border bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900/50 p-3"
-                : "rounded-xl border bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900/50 p-3"
-        }>
-          <p className={
-            telemetry.risk.category === "VERY_HIGH"
-              ? "text-xs font-bold flex items-center gap-1.5 text-red-900 dark:text-red-100"
-              : telemetry.risk.category === "HIGH"
-                ? "text-xs font-bold flex items-center gap-1.5 text-orange-900 dark:text-orange-100"
-                : telemetry.risk.category === "MODERATE"
-                  ? "text-xs font-bold flex items-center gap-1.5 text-amber-900 dark:text-amber-100"
-                  : "text-xs font-bold flex items-center gap-1.5 text-emerald-900 dark:text-emerald-100"
-          }>
-            {telemetry.risk.category === "VERY_HIGH" ? <><Flame className="h-3.5 w-3.5" /> Extreme - Act now</> : telemetry.risk.category === "HIGH" ? <><Activity className="h-3.5 w-3.5" /> High - Limit exposure</> : telemetry.risk.category === "MODERATE" ? <><Sun className="h-3.5 w-3.5" /> Moderate - Stay hydrated</> : <><Users className="h-3.5 w-3.5" /> Low - Normal</>}
-          </p>
-          <p className="mt-1.5 text-xs leading-relaxed opacity-80">
-            {telemetry.risk.category === "VERY_HIGH" ? "Avoid outdoor 12–4pm, open cooling shelters, check elderly hourly." : telemetry.risk.category === "HIGH" ? "Limit outdoor work, ensure water/shade, monitor vulnerable." : telemetry.risk.category === "MODERATE" ? "Take breaks, hydrate, watch for heat symptoms." : "Normal activities, stay aware."}
-          </p>
-        </div>
-      )}
+      {telemetry.risk && (() => {
+        const cat = telemetry.risk.category;
+        const advice = cat === "VERY_HIGH"
+          ? { Icon: Flame, head: "Extreme - Act now", body: "Avoid outdoor 12–4pm, open cooling shelters, check elderly hourly." }
+          : cat === "HIGH"
+            ? { Icon: Activity, head: "High - Limit exposure", body: "Limit outdoor work, ensure water/shade, monitor vulnerable." }
+            : cat === "MODERATE"
+              ? { Icon: Sun, head: "Moderate - Stay hydrated", body: "Take breaks, hydrate, watch for heat symptoms." }
+              : { Icon: Users, head: "Low - Normal", body: "Normal activities, stay aware." };
+        return (
+          <div className={cn("rounded-xl border p-3", riskPanelClass(cat))}>
+            <p className="flex items-center gap-1.5 text-xs font-bold">
+              <advice.Icon className="h-3.5 w-3.5" style={{ color: riskFillForCategory(cat) }} aria-hidden />
+              {advice.head}
+            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+              {advice.body}
+            </p>
+          </div>
+        );
+      })()}
       <div><SectionLabel><span className="flex items-center gap-1.5"><Thermometer className="h-3.5 w-3.5" /> Heat Metrics</span></SectionLabel>
         <div className="grid grid-cols-2 gap-2">
           <SubCard icon={Thermometer} label="WBGT" value={telemetry.risk ? telemetry.risk.wbgt.toFixed(1) : "-"} unit="°C" />
@@ -169,19 +166,15 @@ export default function MapsPage() {
   const { data: forecast } = useSWR(displayId ? `/api/forecast/${displayId}?days=5` : null, jsonFetch);
   const cells = (heatmap as any)?.wards ?? [];
   const selectedCell = selectedId ? cells.find((c: any) => c.wardId === selectedId) ?? null : null;
+  // NOTE: text search never removes wards — it only highlights matches
+  // (dim + outline) inside KolkataMap via searchQuery. Only the layer
+  // controls (category/population) filter the rendered set.
   const filteredCells = useMemo(() => cells.filter((c: any) => {
     if (c.category && !filters.cats.has(c.category)) return false;
     if ((c.population ?? 0) < filters.popMin) return false;
-    if (deferredSearch.trim()) {
-      const q = deferredSearch.trim().toLowerCase();
-      const wardStr = String(c.ward ?? "");
-      const name = (c.wardName ?? "").toLowerCase();
-      const loc = (() => { try { const { getWardLocality } = require("@/lib/geo/wardNames"); return (getWardLocality(c.ward) ?? "").toLowerCase(); } catch { return ""; } })();
-      if (!wardStr.includes(q) && !name.includes(q) && !loc.includes(q) && !String(c.wardId).includes(q)) return false;
-    }
     if (c.wardId === selectedId) return true;
     return true;
-  }), [cells, filters, deferredSearch, selectedId]);
+  }), [cells, filters, selectedId]);
 
   const downloadTelemetry = useCallback(() => {
     if (!telemetry) return;
