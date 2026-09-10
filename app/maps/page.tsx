@@ -1,0 +1,235 @@
+"use client";
+
+import { useEffect, useMemo, useState, useCallback, useDeferredValue } from "react";
+import useSWR from "swr";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
+import { X, MapPin, Thermometer, Droplet, Wind, Sun, Users, Flame, Layers, ChevronRight, Activity, HeartPulse, Download } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { getWardLocality } from "@/lib/geo/wardNames";
+import { TopBar } from "@/components/console/TopBar";
+import { LeftNav } from "@/components/layout/LeftNav";
+import { KolkataMap, type MapWard, RISK_COLORS } from "@/components/map/KolkataMap";
+import { WardInfoBar } from "@/components/console/WardInfoBar";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SubCard } from "@/components/console/SubCard";
+import { SendAlertModal } from "@/components/console/SendAlertModal";
+import { ControlsPopup, type MapLayer } from "@/components/console/ControlsPopup";
+import type { Telemetry } from "@/components/console/TelemetryPanel";
+import { computeMortalityIndex } from "@/lib/heatshield/mortality";
+import { useWard } from "@/lib/wardContext";
+import { useIsMobile } from "@/lib/hooks/useMobile";
+
+const jsonFetch = (u: string) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
+
+function useDebounced<T>(v: T, ms = 250) {
+  const [d, setD] = useState(v);
+  useEffect(() => { const t = setTimeout(() => setD(v), ms); return () => clearTimeout(t); }, [v, ms]);
+  return d;
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{children}</h3>;
+}
+
+function WardDetailBody({ telemetry, forecast, selectedCell, selectedId }: any) {
+  const router = useRouter();
+  const onAnalyticsOpen = () => {
+    if (selectedId) router.push(`/analysis?ward=${selectedId}`);
+    else router.push("/analysis");
+  };
+  if (!telemetry) return <div className="space-y-3 p-4"><Skeleton className="h-24 w-full" /><Skeleton className="h-32 w-full" /></div>;
+  return (
+    <div className="space-y-5 p-4">
+      <div className="grid grid-cols-2 gap-2">
+        <Card className="overflow-hidden border-2 border-primary/20 shadow-sm">
+          <div className="h-2 bg-gradient-to-r from-teal-500 via-orange-500 to-red-600" />
+          <CardContent className="p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Flame className="h-3 w-3" /> Risk</p>
+            <p className="text-3xl font-black tabular-nums">{telemetry.risk ? telemetry.risk.value.toFixed(3) : "-"}</p>
+            <p className="text-xs font-medium text-muted-foreground">{telemetry.risk?.displayCategory ?? ""}</p>
+          </CardContent>
+        </Card>
+        {(() => {
+          const r = telemetry.risk;
+          if (!r) return null;
+          const mort = computeMortalityIndex({ heatIndex: r.heatIndex, nighttimeRecovery: r.recovery, persistence: r.persistence, vulnerability: r.vulnerability });
+          return (
+            <Card><CardContent className="p-3">
+              <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground"><HeartPulse className="h-3 w-3" /> Mortality</p>
+              <p className="text-3xl font-black tabular-nums">{mort.index}<span className="text-base font-semibold text-muted-foreground">/100</span></p>
+              <p className="text-xs text-muted-foreground">{mort.band}</p>
+            </CardContent></Card>
+          );
+        })()}
+      </div>
+      {telemetry.risk && (
+        <div className={
+          telemetry.risk.category === "VERY_HIGH"
+            ? "rounded-xl border bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900/50 p-3"
+            : telemetry.risk.category === "HIGH"
+              ? "rounded-xl border bg-orange-50 border-orange-200 dark:bg-orange-950/30 dark:border-orange-900/50 p-3"
+              : telemetry.risk.category === "MODERATE"
+                ? "rounded-xl border bg-amber-50 border-amber-200 dark:bg-amber-950/30 dark:border-amber-900/50 p-3"
+                : "rounded-xl border bg-emerald-50 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-900/50 p-3"
+        }>
+          <p className={
+            telemetry.risk.category === "VERY_HIGH"
+              ? "text-xs font-bold flex items-center gap-1.5 text-red-900 dark:text-red-100"
+              : telemetry.risk.category === "HIGH"
+                ? "text-xs font-bold flex items-center gap-1.5 text-orange-900 dark:text-orange-100"
+                : telemetry.risk.category === "MODERATE"
+                  ? "text-xs font-bold flex items-center gap-1.5 text-amber-900 dark:text-amber-100"
+                  : "text-xs font-bold flex items-center gap-1.5 text-emerald-900 dark:text-emerald-100"
+          }>
+            {telemetry.risk.category === "VERY_HIGH" ? <><Flame className="h-3.5 w-3.5" /> Extreme - Act now</> : telemetry.risk.category === "HIGH" ? <><Activity className="h-3.5 w-3.5" /> High - Limit exposure</> : telemetry.risk.category === "MODERATE" ? <><Sun className="h-3.5 w-3.5" /> Moderate - Stay hydrated</> : <><Users className="h-3.5 w-3.5" /> Low - Normal</>}
+          </p>
+          <p className="mt-1.5 text-xs leading-relaxed opacity-80">
+            {telemetry.risk.category === "VERY_HIGH" ? "Avoid outdoor 12–4pm, open cooling shelters, check elderly hourly." : telemetry.risk.category === "HIGH" ? "Limit outdoor work, ensure water/shade, monitor vulnerable." : telemetry.risk.category === "MODERATE" ? "Take breaks, hydrate, watch for heat symptoms." : "Normal activities, stay aware."}
+          </p>
+        </div>
+      )}
+      <div><SectionLabel><span className="flex items-center gap-1.5"><Thermometer className="h-3.5 w-3.5" /> Heat Metrics</span></SectionLabel>
+        <div className="grid grid-cols-2 gap-2">
+          <SubCard icon={Thermometer} label="WBGT" value={telemetry.risk ? telemetry.risk.wbgt.toFixed(1) : "-"} unit="°C" />
+          <SubCard icon={Flame} label="Heat Index" value={telemetry.risk ? telemetry.risk.heatIndex.toFixed(1) : "-"} unit="°C" />
+          <SubCard icon={Sun} label="UTCI" value={telemetry.risk?.utci != null ? (telemetry.risk.utci as number).toFixed(1) : "-"} unit="°C" />
+          <SubCard icon={Activity} label="Thermal Stress" value={telemetry.risk ? telemetry.risk.thermal.toFixed(2) : "-"} />
+        </div>
+      </div>
+      <div><SectionLabel>Microclimate</SectionLabel>
+        <div className="grid grid-cols-2 gap-2">
+          <SubCard icon={Thermometer} label="Temp" value={telemetry.macro.temp !== null ? telemetry.macro.temp.toFixed(1) : "-"} unit="°C" />
+          <SubCard icon={Droplet} label="Humidity" value={telemetry.macro.humidity !== null ? telemetry.macro.humidity.toFixed(0) : "-"} unit="%" />
+          <SubCard icon={Wind} label="Wind" value={telemetry.macro.wind !== null ? telemetry.macro.wind.toFixed(1) : "-"} unit="m/s" />
+          <SubCard icon={Sun} label="Solar" value={telemetry.macro.solar !== null ? telemetry.macro.solar.toFixed(0) : "-"} unit="W/m²" />
+        </div>
+      </div>
+      {forecast?.days?.length ? (
+        <div>
+          <SectionLabel>Next 5 Days Forecast</SectionLabel>
+          <div className="custom-scrollbar flex gap-2.5 overflow-x-auto overscroll-x-contain pb-3 snap-x snap-mandatory -mx-1 px-1">
+            {forecast.days.slice(0, 5).map((d: any, i: number) => (
+              <div key={d.date} className={`flex min-w-[268px] snap-start flex-col gap-2 rounded-xl border p-3 ${i === 0 ? "bg-primary/5 border-primary/20" : "bg-card"}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs font-bold">{new Date(d.date).toLocaleDateString("en-IN", { month: "short", day: "numeric" })}</p>
+                    <p className="text-[11px] text-muted-foreground">{i === 0 ? "Today" : new Date(d.date).toLocaleDateString("en-IN", { weekday: "short" })}</p>
+                  </div>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${d.category === "VERY_HIGH" ? "bg-red-600 text-white" : d.category === "HIGH" ? "bg-orange-500 text-white" : d.category === "MODERATE" ? "bg-amber-500 text-white" : "bg-emerald-500 text-white"}`}>{d.category === "VERY_HIGH" ? "Extreme" : d.category}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="rounded-lg bg-muted/40 p-2">
+                    <p className="text-[10px] text-muted-foreground">Temp</p>
+                    <p className="text-sm font-bold tabular-nums">{d.tempMax?.toFixed(0) ?? "-"}°<span className="text-xs font-normal text-muted-foreground">/{d.tempMin?.toFixed(0) ?? "-"}°</span></p>
+                  </div>
+                  <div className="rounded-lg bg-muted/40 p-2">
+                    <p className="text-[10px] text-muted-foreground">WBGT</p>
+                    <p className="text-sm font-bold tabular-nums">{d.wbgtMax?.toFixed(1) ?? "-"}°</p>
+                  </div>
+                  <div className="rounded-lg bg-muted/40 p-2">
+                    <p className="text-[10px] text-muted-foreground">HI</p>
+                    <p className="text-sm font-bold tabular-nums">{d.heatIndexMax?.toFixed(1) ?? "-"}°</p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold tabular-nums">Risk {(d.risk * 100).toFixed(0)}/100</span>
+                  {d.mortality && <span className="flex items-center gap-1 text-muted-foreground"><HeartPulse className="h-3 w-3" /> {d.mortality.index}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export default function MapsPage() {
+  const { selectedId, setSelectedId } = useWard();
+  const [hoveredId, setHoveredId] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounced(search, 180);
+  const deferredSearch = useDeferredValue(debouncedSearch);
+  const [layer, setLayer] = useState<MapLayer>("risk");
+  const [filters, setFilters] = useState<{ cats: Set<string>; popMin: number }>(() => ({ cats: new Set(["LOW", "MODERATE", "HIGH", "VERY_HIGH"]), popMin: 0 }));
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalAlertId, setModalAlertId] = useState<number | null>(null);
+  const isMobile = useIsMobile();
+  const reduceMotion = !!useReducedMotion();
+  const shouldAnimate = !reduceMotion && !isMobile;
+
+  const { data: summary } = useSWR("/api/wards/summary", jsonFetch);
+  const { data: heatmap } = useSWR("/api/wards/heatmap", jsonFetch);
+  const { data: alertsData } = useSWR("/api/alerts/active", jsonFetch);
+  const displayId = hoveredId ?? selectedId;
+  const { data: telemetry } = useSWR(displayId ? `/api/wards/${displayId}/telemetry` : null, jsonFetch);
+  const { data: forecast } = useSWR(displayId ? `/api/forecast/${displayId}?days=5` : null, jsonFetch);
+  const cells = (heatmap as any)?.wards ?? [];
+  const selectedCell = selectedId ? cells.find((c: any) => c.wardId === selectedId) ?? null : null;
+  const filteredCells = useMemo(() => cells.filter((c: any) => {
+    if (c.category && !filters.cats.has(c.category)) return false;
+    if ((c.population ?? 0) < filters.popMin) return false;
+    if (deferredSearch.trim()) {
+      const q = deferredSearch.trim().toLowerCase();
+      const wardStr = String(c.ward ?? "");
+      const name = (c.wardName ?? "").toLowerCase();
+      const loc = (() => { try { const { getWardLocality } = require("@/lib/geo/wardNames"); return (getWardLocality(c.ward) ?? "").toLowerCase(); } catch { return ""; } })();
+      if (!wardStr.includes(q) && !name.includes(q) && !loc.includes(q) && !String(c.wardId).includes(q)) return false;
+    }
+    if (c.wardId === selectedId) return true;
+    return true;
+  }), [cells, filters, deferredSearch, selectedId]);
+
+  const downloadTelemetry = useCallback(() => {
+    if (!telemetry) return;
+    const blob = new Blob([JSON.stringify({ ...telemetry, forecast: (forecast as any)?.days ?? [] }, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `telemetry-ward-${(telemetry as any).ward ?? selectedId}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [telemetry, forecast, selectedId]);
+
+  return (
+    <div className="flex h-[100dvh] flex-col bg-background">
+      <TopBar
+        watchLabel={summary ? `Level ${summary.watch.level} · ${summary.watch.name}` : "Level …"}
+        syncedAt={summary?.refreshedAt ?? (heatmap as any)?.refreshedAt ?? null}
+        syncDetail={summary ? `${summary.synced}/${summary.total}` : null}
+        timezone="Asia/Kolkata"
+        onSendAlert={() => setModalOpen(true)}
+        searchQuery={search}
+        onSearchChange={setSearch}
+        onAnalyticsOpen={() => {}}
+        wards={cells.map((c: any) => ({ ward: c.ward, wardName: c.wardName, wardId: c.wardId }))}
+        onSelectWard={(id) => setSelectedId(id)}
+      />
+      <div className="flex min-h-0 flex-1">
+        <LeftNav />
+        <div className="relative flex min-h-0 flex-1 flex-col bg-muted/20">
+          <div className="relative flex-1">
+            {cells.length === 0 ? (
+              <div className="flex h-full items-center justify-center"><Skeleton className="h-10 w-10 rounded-full" /></div>
+            ) : (
+              <KolkataMap cells={filteredCells} selectedId={selectedId} hoveredId={hoveredId} onSelect={(id) => setSelectedId(id)} onHover={setHoveredId} searchQuery={deferredSearch} layer={layer} />
+            )}
+            <button onClick={() => setControlsOpen(true)} className="absolute bottom-[172px] right-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border bg-card shadow-lg hover:bg-accent" aria-label="Map layers">
+              <Layers className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+        <WardInfoBar selectedId={selectedId} selectedCell={selectedCell} telemetry={telemetry as any} forecast={forecast as any} onClose={() => setSelectedId(null)} onDownload={downloadTelemetry}>
+          <WardDetailBody telemetry={telemetry as any} forecast={forecast as any} selectedCell={selectedCell} selectedId={selectedId} />
+        </WardInfoBar>
+      </div>
+      <ControlsPopup open={controlsOpen} onClose={() => setControlsOpen(false)} layer={layer} onLayerChange={setLayer} filters={filters} onFilterChange={setFilters} />
+      <SendAlertModal open={modalOpen} onClose={() => setModalOpen(false)} alerts={[]} defaultAlertId={modalAlertId} timezone="Asia/Kolkata" telemetry={telemetry as any} outlook={[]} />
+    </div>
+  );
+}

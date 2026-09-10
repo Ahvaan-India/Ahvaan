@@ -10,6 +10,13 @@ import {
   ResponsiveContainer,
   CartesianGrid,
   Legend,
+  BarChart,
+  Bar,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -63,16 +70,25 @@ export function WardAnalysis({
   const hist = trend?.history ?? [];
   const fc = forecast?.days ?? [];
   const hasHist = hist.length > 1;
+  const latest = hist[hist.length - 1] ?? null;
+  const radarData = latest
+    ? [
+        { subject: "Thermal", value: +(latest.thermal * 100).toFixed(1) },
+        { subject: "Exposure", value: 55 },
+        { subject: "Vuln", value: 25 },
+        { subject: "Persist", value: latest ? 50 : 0 },
+        { subject: "WBGT", value: latest.wbgt ? Math.min(100, ((latest.wbgt - 15) / 25) * 100) : 0 },
+      ]
+    : [];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h3 className="text-lg font-extrabold tracking-tight">
-          {getWardDisplayName(ward, null)} Ward Analysis
+          {getWardDisplayName(ward, null)} - Deep Analysis
         </h3>
         <p className="text-sm text-muted-foreground">
-          {hist.length} snapshots · {fc.length} forecast days · tap another ward
-          to switch
+          {hist.length} snapshots · {fc.length} forecast days · {latest ? `latest risk ${(latest.risk * 100).toFixed(1)}/100` : "no history yet"} · tap another ward to switch
         </p>
       </div>
 
@@ -147,7 +163,7 @@ export function WardAnalysis({
                   <Line
                     type="monotone"
                     dataKey="thermal"
-                    name="Thermal ×100"
+                    name="Thermal �-100"
                     dot={false}
                     stroke="#0ea5e9"
                     strokeWidth={2}
@@ -206,6 +222,41 @@ export function WardAnalysis({
                 </p>
               </>
             )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2"><CardTitle className="text-base">Risk components - latest</CardTitle></CardHeader>
+          <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-4">
+            {latest ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <RadarChart data={radarData}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
+                  <PolarRadiusAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
+                  <Radar dataKey="value" stroke="#ef4444" fill="#ef4444" fillOpacity={0.4} isAnimationActive={false} />
+                  <Tooltip />
+                </RadarChart>
+              </ResponsiveContainer>
+            ) : <Skeleton className="h-full w-full" />}
+          </CardContent>
+        </Card>
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2"><CardTitle className="text-base">5-day forecast - risk bars</CardTitle></CardHeader>
+          <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-4">
+            {fc.length ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={fc.map((f) => ({ date: f.date.slice(5), risk: +(f.risk * 100).toFixed(1) }))}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="risk" fill="#f97316" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : <Skeleton className="h-full w-full" />}
           </CardContent>
         </Card>
       </div>

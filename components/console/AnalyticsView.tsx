@@ -44,6 +44,7 @@ interface Props {
     riskScore: number | null;
     category: string | null;
     wbgt: number | null;
+    heatIndex?: number | null;
     population: number | null;
     exposure?: number | null;
     vulnerability?: number | null;
@@ -443,6 +444,102 @@ export function AnalyticsView({ summary, wards }: Props) {
           </Card>
         </Item>
       </div>
+
+      {/* All parameters - heat index, WBGT, etc. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <Item {...itemProps} className="min-w-0">
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Heat Index (°C) distribution</CardTitle></CardHeader>
+            <CardContent className="h-[240px] w-full min-w-0 p-2 sm:p-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={Array.from({ length: 8 }, (_, i) => {
+                  const lo = 20 + i * 5, hi = lo + 5;
+                  return { bucket: `${lo}–${hi}`, count: (wards as any[]).filter((w: any) => w.heatIndex != null && w.heatIndex >= lo && w.heatIndex < hi).length };
+                })}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} angle={-20} dy={10} height={36} />
+                  <YAxis tick={{ fontSize: 11 }} width={28} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#f97316" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </Item>
+        <Item {...itemProps} className="min-w-0">
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2"><CardTitle className="text-sm">WBGT (°C) distribution</CardTitle></CardHeader>
+            <CardContent className="h-[240px] w-full min-w-0 p-2 sm:p-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={Array.from({ length: 8 }, (_, i) => {
+                  const lo = 15 + i * 3, hi = lo + 3;
+                  return { bucket: `${lo}–${hi}`, count: valid.filter((w) => w.wbgt != null && w.wbgt >= lo && w.wbgt < hi).length };
+                })}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} angle={-20} dy={10} height={36} />
+                  <YAxis tick={{ fontSize: 11 }} width={28} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#ef4444" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </Item>
+        <Item {...itemProps} className="min-w-0">
+          <Card className="overflow-hidden">
+            <CardHeader className="pb-2"><CardTitle className="text-sm">Vulnerability distribution</CardTitle></CardHeader>
+            <CardContent className="h-[240px] w-full min-w-0 p-2 sm:p-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={Array.from({ length: 10 }, (_, i) => {
+                  const lo = i / 10, hi = (i + 1) / 10;
+                  return { bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`, count: valid.filter((w) => (w.vulnerability ?? 0) >= lo && (w.vulnerability ?? 0) < hi + (i === 9 ? 0.001 : 0)).length };
+                })}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} interval={0} angle={-20} dy={10} height={36} />
+                  <YAxis tick={{ fontSize: 11 }} width={28} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#a855f7" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </Item>
+      </div>
+
+      {/* All parameters table */}
+      <Card className="overflow-hidden">
+        <CardHeader className="pb-2"><CardTitle className="text-base">All parameters - ward table (141 wards)</CardTitle></CardHeader>
+        <CardContent className="max-h-[380px] overflow-auto p-0">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 bg-card">
+              <tr className="border-b text-left">
+                <th className="p-2">Ward</th>
+                <th className="p-2">Risk</th>
+                <th className="p-2">WBGT</th>
+                <th className="p-2">HI</th>
+                <th className="p-2">Thermal</th>
+                <th className="p-2">Exposure</th>
+                <th className="p-2">Vuln</th>
+                <th className="p-2">Pop</th>
+              </tr>
+            </thead>
+            <tbody>
+              {valid.slice(0, 50).map((w) => (
+                <tr key={w.wardId} className="border-b hover:bg-muted/40">
+                  <td className="p-2 font-medium">W{w.ward}</td>
+                  <td className="p-2 tabular-nums">{(w.riskScore * 100).toFixed(1)}</td>
+                  <td className="p-2 tabular-nums">{w.wbgt?.toFixed(1) ?? "-"}</td>
+                  <td className="p-2 tabular-nums">{(w as any).heatIndex?.toFixed(1) ?? "-"}</td>
+                  <td className="p-2 tabular-nums">{(w.thermal! * 100).toFixed(0)}</td>
+                  <td className="p-2 tabular-nums">{(w.exposure! * 100).toFixed(0)}</td>
+                  <td className="p-2 tabular-nums">{(w.vulnerability! * 100).toFixed(0)}</td>
+                  <td className="p-2 tabular-nums">{w.population?.toLocaleString("en-IN") ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
     </Wrapper>
   );
 }

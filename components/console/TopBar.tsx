@@ -2,24 +2,23 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, BarChart3, Map, Search, Flame, X } from "lucide-react";
+import { Bell, BarChart3, Map, Search, Flame, X, Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useNav } from "@/lib/navContext";
 import {
   getWardDisplayName,
   getWardLocality,
   matchesWardQuery,
 } from "@/lib/geo/wardNames";
 import { useState, useMemo } from "react";
+import { cn } from "@/lib/utils";
 
 const NAV = [
-  { label: "Map", icon: Map, href: "/", isMap: true },
-  {
-    label: "Analytics",
-    icon: BarChart3,
-    href: "#analytics",
-    action: "analytics" as const,
-  },
+  { label: "Overview", href: "/overview", icon: Map, exact: true },
+  { label: "Maps", href: "/maps", icon: Map },
+  { label: "Analysis", href: "/analysis", icon: BarChart3 },
+  { label: "Alerts", href: "/alerts", icon: Bell },
 ];
 
 /**
@@ -54,8 +53,9 @@ export function TopBar({
   onSelectWard?: (wardId: number) => void;
 }) {
   const pathname = usePathname();
-  const isMap = pathname === "/";
+  const isMap = pathname === "/maps";
   const [focused, setFocused] = useState(false);
+  const { navOpen, setNavOpen } = useNav();
 
   const suggestions = useMemo(() => {
     if (!wards || !searchQuery?.trim()) return [];
@@ -70,40 +70,35 @@ export function TopBar({
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
-      <div className="relative mx-auto flex h-[56px] max-w-[1600px] items-center justify-between gap-4 px-4 sm:px-6">
-        {/* Left: Brand + Nav */}
-        <div className="flex items-center gap-3 justify-self-start">
-          <Link
-            href="/"
-            className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
-          >
+      <div className="relative mx-auto flex h-[56px] max-w-[1600px] items-center gap-2 px-2 sm:gap-4 sm:px-6">
+        {/* LEFT SECTION: toggler, then branding, then big space */}
+        <div className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="-ml-1 h-9 w-9 shrink-0 rounded-full lg:hidden"
+          onClick={() => setNavOpen((v) => !v)}
+          aria-label="Toggle menu"
+        >
+          {navOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </Button>
+        <div className="hidden items-center gap-2 lg:flex shrink-0">
+          <Link href="/maps" className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80">
             <img src="/logo.svg" alt="Ahvaan logo" width={32} height={32} className="h-8 w-8 rounded-lg shadow-sm" />
-            <span className="hidden sm:flex flex-col leading-none">
+            <span className="flex flex-col leading-none">
               <span className="text-[14px] font-extrabold tracking-tight">Ahvaan</span>
               <span className="text-[10px] font-semibold tracking-widest text-muted-foreground">KOLKATA</span>
             </span>
           </Link>
-          <div className="hidden h-6 w-px bg-border sm:block" />
-          <nav className="hidden items-center gap-1 sm:flex">
+          <div className="h-6 w-px bg-border" />
+          <nav className="flex items-center gap-1">
             {NAV.map((n) => {
-              const isAnalytics = "action" in n;
-              if (isAnalytics) {
-                return (
-                  <button
-                    key={n.label}
-                    onClick={onAnalyticsOpen}
-                    className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                  >
-                    <n.icon className="h-3.5 w-3.5" />
-                    {n.label}
-                  </button>
-                );
-              }
+              const active = pathname === n.href || (n.href !== "/" && pathname.startsWith(n.href));
               return (
                 <Link
-                  key={n.label}
+                  key={n.href}
                   href={n.href}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm"
+                  className={cn("inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-colors", active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground")}
                 >
                   <n.icon className="h-3.5 w-3.5" />
                   {n.label}
@@ -112,10 +107,21 @@ export function TopBar({
             })}
           </nav>
         </div>
+        {/* Mobile brand only (nav in drawer) — snug right of toggler */}
+        <Link href="/maps" className="flex shrink-0 items-center gap-1 lg:hidden">
+          <img src="/logo.svg" alt="Ahvaan logo" width={28} height={28} className="h-7 w-7 rounded-lg shadow-sm" />
+          <span className="flex flex-col leading-none">
+            <span className="text-[13px] font-extrabold tracking-tight">Ahvaan</span>
+            <span className="text-[9px] font-semibold tracking-widest text-muted-foreground">KOLKATA</span>
+          </span>
+        </Link>
+        {/* Big space pushing right section to the edge */}
+        <div className="flex-1" aria-hidden />
+        </div>
 
-        {/* Centre: Search — truly centred via absolute, always visible */}
+        {/* Centre: Search - centred on desktop, full-width row on phones */}
         {isMap && onSearchChange ? (
-          <div className="absolute left-1/2 top-1/2 flex min-w-0 max-w-[280px] -translate-x-1/2 -translate-y-1/2 sm:max-w-md sm:w-full">
+          <div className="absolute left-1/2 top-1/2 hidden min-w-0 max-w-md -translate-x-1/2 -translate-y-1/2 sm:flex sm:w-full">
             <div className="relative flex w-full max-w-md items-center">
               <Search className="pointer-events-none absolute left-3 h-4 w-4 text-muted-foreground" />
               <input
@@ -165,8 +171,8 @@ export function TopBar({
           </div>
         ) : null}
 
-        {/* Right cluster */}
-        <div className="flex items-center gap-3">
+        {/* RIGHT SECTION: theme toggler + alert button */}
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
           <div className="hidden items-center gap-2 xl:flex">
             <span className="rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
               {watchLabel}
@@ -203,6 +209,40 @@ export function TopBar({
           </Button>
         </div>
       </div>
+      {/* Mobile search - full-width below header, consistent */}
+      {isMap && onSearchChange && (
+        <div className="border-t bg-card px-3 py-2.5 sm:hidden">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              value={searchQuery ?? ""}
+              onChange={(e) => onSearchChange(e.target.value)}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setTimeout(() => setFocused(false), 180)}
+              placeholder="Search ward…"
+              className="h-10 w-full rounded-xl border bg-muted/40 py-2 pl-9 pr-9 text-sm placeholder:text-muted-foreground focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
+            />
+            {searchQuery ? (
+              <button onClick={() => onSearchChange("")} className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full hover:bg-muted" aria-label="Clear search">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+            {showDropdown && (
+              <div className="absolute left-0 right-0 top-[48px] z-30 max-h-[320px] overflow-y-auto rounded-xl border bg-popover p-1 shadow-xl">
+                {suggestions.map((w) => {
+                  const loc = getWardLocality(w.ward);
+                  return (
+                    <button key={w.wardId} onMouseDown={(e) => { e.preventDefault(); onSelectWard?.(w.wardId); setFocused(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">{w.ward ?? "·"}</span>
+                      <span className="min-w-0"><span className="block text-sm font-semibold leading-none">{getWardDisplayName(w.ward, w.wardName)}</span>{loc && <span className="block text-xs text-muted-foreground">{loc}</span>}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </header>
   );
 }

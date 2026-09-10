@@ -14,6 +14,9 @@ export const metadata: Metadata = {
   description: "Ahvaan  Kolkata heat-risk command center",
 };
 
+import { WardProvider } from "@/lib/wardContext";
+import { NavProvider } from "@/lib/navContext";
+
 export default function RootLayout({
   children,
 }: {
@@ -28,7 +31,11 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={archivo.variable}>{children}</body>
+      <body className={archivo.variable}>
+        <WardProvider>
+          <NavProvider>{children}</NavProvider>
+        </WardProvider>
+      </body>
     </html>
   );
 }

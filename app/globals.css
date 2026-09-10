@@ -125,7 +125,7 @@
   }
 }
 
-/* Polished thin scrollbars  map controls + ward popup + analytics */
+/* Polished thin scrollbars  everywhere */
 @layer utilities {
   .custom-scrollbar {
     scrollbar-width: thin;
@@ -152,5 +152,25 @@
   }
   .custom-scrollbar::-webkit-scrollbar-corner {
     background: transparent;
+  }
+}
+@layer base {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.18) transparent;
+  }
+  html::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  html::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  html::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.18);
+    border-radius: 9999px;
+  }
+  html::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground) / 0.28);
   }
 }

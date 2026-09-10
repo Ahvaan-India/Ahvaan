@@ -1,5 +1,5 @@
-// Real KMC ward localities — 1:1 with locations (ward numbers 1-144).
-// Updated per user authoritative list (with citations) — 2024 KMC.
+// Real KMC ward localities - 1:1 with locations (ward numbers 1-144).
+// Updated per user authoritative list (with citations) - 2024 KMC.
 
 export const WARD_LOCALITIES: Record<number, string> = {
   1: "Cossipore",

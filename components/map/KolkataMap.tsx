@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, memo, useCallback } from "react";
+import { useMemo, useRef, useState, memo, useCallback, useEffect } from "react";
 import { ZoomIn, ZoomOut, LocateFixed, Maximize2 } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { RiskBadge } from "@/components/console/RiskBadge";
@@ -286,23 +286,24 @@ export function KolkataMap({
   }, []);
 
   const handlePointerDown = (e: React.PointerEvent) => {
-    (e.target as Element).setPointerCapture(e.pointerId);
+    // Don't capture - let polygon clicks through; just track drag start
     setDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
   };
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!drag || !wrapRef.current) return;
+    const dx = e.clientX - drag.sx;
+    const dy = e.clientY - drag.sy;
+    // Small movement = tap, not drag - don't pan, allow click
+    if (Math.hypot(dx, dy) < 6) return;
     const rect = wrapRef.current.getBoundingClientRect();
     const scaleX = vbW / rect.width,
       scaleY = vbH / rect.height;
     setPan({
-      x: drag.ox + (e.clientX - drag.sx) * scaleX,
-      y: drag.oy + (e.clientY - drag.sy) * scaleY,
+      x: drag.ox + dx * scaleX,
+      y: drag.oy + dy * scaleY,
     });
   };
-  const handlePointerUp = (e: React.PointerEvent) => {
-    try {
-      (e.target as Element).releasePointerCapture(e.pointerId);
-    } catch {}
+  const handlePointerUp = () => {
     setDrag(null);
   };
 
@@ -324,6 +325,23 @@ export function KolkataMap({
   // Ward labels  show when zoomed or when hovered/selected/search match
   const showLabels = z > 1.2 && !isMobile ? true : z > 1.0;
 
+  // Ensure hover clears even when pointer is captured or leaves window
+  useEffect(() => {
+    const clear = () => {
+      onHover(null);
+      setTip(null);
+    };
+    const onWindowLeave = (e: MouseEvent) => {
+      if (!e.relatedTarget) clear();
+    };
+    window.addEventListener("mouseleave", onWindowLeave);
+    document.addEventListener("mouseleave", onWindowLeave as unknown as EventListener);
+    return () => {
+      window.removeEventListener("mouseleave", onWindowLeave);
+      document.removeEventListener("mouseleave", onWindowLeave as unknown as EventListener);
+    };
+  }, [onHover]);
+
   return (
     <div
       ref={wrapRef}
@@ -331,6 +349,10 @@ export function KolkataMap({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={() => {
+        onHover(null);
+        setTip(null);
+      }}
+      onMouseLeave={() => {
         onHover(null);
         setTip(null);
       }}
@@ -366,6 +388,10 @@ export function KolkataMap({
           height={vbH}
           fill="#f1f5f9"
           className="dark:fill-[#1e293b]/40"
+          onMouseEnter={() => {
+            onHover(null);
+            setTip(null);
+          }}
         />
         {/* Hooghly River hint  west of city */}
         <rect
@@ -608,21 +634,16 @@ export function KolkataMap({
             style={{ left: tip.x, top: tip.y }}
           >
             <p className="text-xs font-extrabold leading-none">
-              {getWardDisplayName(tip.cell.ward, tip.cell.wardName)}
+              {tip.cell.ward !== null ? `Ward ${tip.cell.ward}` : `Location ${tip.cell.wardId}`}
             </p>
             {(() => {
               const loc = getWardLocality(tip.cell.ward);
               return loc ? (
-                <p className="mt-0.5 text-[11px] font-medium text-primary">
+                <p className="mt-0.5 truncate text-[11px] font-medium text-primary">
                   {loc}
                 </p>
               ) : null;
             })()}
-            {tip.cell.wardName && (
-              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-                {tip.cell.wardName}
-              </p>
-            )}
             <div className="mt-2 flex items-center gap-2">
               <span className="text-xl font-black tabular-nums leading-none">
                 {tip.cell.riskScore !== null
