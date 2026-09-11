@@ -24,6 +24,11 @@ function AnalysisContent() {
   const wards = (heatmap as any)?.wards ?? [];
   const selectedWard = wards.find((w: any) => w.wardId === selectedId)?.ward ?? wards.find((w: any) => w.ward === selectedId)?.ward ?? null;
   const wardData = wards.find((w: any) => w.wardId === selectedId || w.ward === selectedId);
+  const cityMean = useMemo(() => {
+    const rs = wards.filter((w: any) => w.riskScore != null).map((w: any) => w.riskScore * 100);
+    if (!rs.length) return null;
+    return rs.reduce((s: number, v: number) => s + v, 0) / rs.length;
+  }, [wards]);
 
   return (
     <div className="flex h-[100dvh] flex-col bg-background">
@@ -39,7 +44,7 @@ function AnalysisContent() {
               subtitle="Deep dive for the selected ward - tap a ward on Maps to switch"
             />
             <div className="mt-6">
-              <WardAnalysis wardId={selectedId} ward={selectedWard} />
+              <WardAnalysis wardId={selectedId} ward={selectedWard} cityMean={cityMean} />
             </div>
           </div>
         </main>

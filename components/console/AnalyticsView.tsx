@@ -21,7 +21,23 @@ import { motion, useReducedMotion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RISK_COLORS } from "@/components/map/KolkataMap";
 import { useIsMobile } from "@/lib/hooks/useMobile";
+import {
+  AXIS_TICK,
+  xLabel,
+  yLabel,
+  domain100,
+  domainRaw,
+  ceilNice,
+  dataBins,
+} from "@/lib/chartAxis";
+import { ChartTooltip } from "@/components/console/ChartTooltip";
 import useSWR from "swr";
+
+const BAR_CURSOR = { fill: "hsl(var(--muted))", fillOpacity: 0.35 };
+const fmtInt = (v: any) =>
+  typeof v === "number" && Number.isFinite(v)
+    ? Math.round(v).toLocaleString("en-IN")
+    : String(v);
 
 const jsonFetchTrend = (u: string) =>
   fetch(u).then((r) => {
@@ -92,13 +108,8 @@ export function AnalyticsView({ summary, wards }: Props) {
     },
   ];
 
-  const top10 = [...valid]
-    .sort((a, b) => b.riskScore - a.riskScore)
-    .slice(0, 10)
-    .map((w) => ({
-      label: w.ward !== null ? `W${w.ward}` : `${w.wardId}`,
-      risk: +(w.riskScore * 100).toFixed(1),
-    }));
+  // NOTE: no top-wards bar chart here — the overview page already covers
+  // that with its "Most critical wards" card (tap → map).
 
   const scatter = valid.slice(0, 60).map((w) => ({
     pop: w.population ?? 0,
@@ -116,6 +127,32 @@ export function AnalyticsView({ summary, wards }: Props) {
       ).length,
     };
   });
+
+  // Data-driven extents so axes fit the data (not fixed full ranges).
+  const risk100 = valid.map((w) => w.riskScore * 100);
+  const riskDom = domain100(risk100);
+  const popMax = ceilNice(Math.max(0, ...valid.map((w) => w.population ?? 0)));
+  const expVals = valid.map((w) => (w.exposure ?? 0) * 100);
+  const vulnVals = valid.map((w) => (w.vulnerability ?? 0) * 100);
+  const expDom = domain100(expVals);
+  const vulnDom = domain100(vulnVals);
+  const hiBins = dataBins(
+    (wards as any[]).map((w: any) => w.heatIndex),
+    6,
+  );
+  const wbgtBins = dataBins(
+    valid.map((w) => w.wbgt),
+    6,
+  );
+  const wbgtLine = [...valid]
+    .sort((a, b) => a.riskScore - b.riskScore)
+    .slice(0, 50)
+    .map((w) => ({
+      r: +(w.riskScore * 100).toFixed(1),
+      wbgt: w.wbgt ?? 0,
+    }));
+  const wbgtLineX = domain100(wbgtLine.map((d) => d.r));
+  const wbgtLineY = domainRaw(wbgtLine.map((d) => d.wbgt));
 
   const Wrapper: React.ElementType = reduceMotion ? "div" : motion.div;
   const wrapperProps = reduceMotion
@@ -172,7 +209,15 @@ export function AnalyticsView({ summary, wards }: Props) {
                       <Cell key={e.name} fill={e.color} />
                     ))}
                   </Pie>
-                  <Tooltip />
+                  <Tooltip
+                    animationDuration={0}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "value", label: "Wards" }]}
+                        unit=" wards"
+                      />
+                    }
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </CardContent>
@@ -192,14 +237,28 @@ export function AnalyticsView({ summary, wards }: Props) {
                   <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                   <XAxis
                     dataKey="bucket"
-                    tick={{ fontSize: 10 }}
-                    interval={0}
-                    angle={-20}
-                    dy={10}
-                    height={40}
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    minTickGap={16}
+                    height={48}
+                    label={xLabel("Risk score (0–100)")}
                   />
-                  <YAxis tick={{ fontSize: 11 }} width={30} />
-                  <Tooltip />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    width={44}
+                    allowDecimals={false}
+                    label={yLabel("Wards")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={BAR_CURSOR}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "count", label: "Wards" }]}
+                        unit=" wards"
+                      />
+                    }
+                  />
                   <Bar
                     dataKey="count"
                     fill="#f97316"
@@ -213,44 +272,7 @@ export function AnalyticsView({ summary, wards }: Props) {
         </Item>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Item {...itemProps} className="min-w-0">
-          <Card className="overflow-hidden">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Top 10 hottest wards</CardTitle>
-            </CardHeader>
-            <CardContent className="h-[320px] w-full min-w-0 p-2 sm:p-6">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={top10}
-                  layout="vertical"
-                  margin={{ left: 30, right: 16, top: 8, bottom: 8 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis
-                    type="number"
-                    domain={[0, 100]}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="label"
-                    tick={{ fontSize: 11 }}
-                    width={36}
-                  />
-                  <Tooltip />
-                  <Bar
-                    dataKey="risk"
-                    fill="#ef4444"
-                    radius={[0, 6, 6, 0]}
-                    isAnimationActive={chartAnim}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </Item>
-
+      <div className="grid grid-cols-1 gap-4">
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
             <CardHeader className="pb-2">
@@ -268,18 +290,36 @@ export function AnalyticsView({ summary, wards }: Props) {
                     type="number"
                     dataKey="pop"
                     name="Population"
-                    tick={{ fontSize: 11 }}
+                    domain={[0, popMax]}
+                    tick={AXIS_TICK}
+                    tickCount={6}
                     tickFormatter={(v) => `${Math.round(v / 1000)}k`}
+                    height={48}
+                    label={xLabel("Population (wards)")}
                   />
                   <YAxis
                     type="number"
                     dataKey="risk"
                     name="Risk"
-                    domain={[0, 100]}
-                    tick={{ fontSize: 11 }}
-                    width={40}
+                    domain={riskDom}
+                    tick={AXIS_TICK}
+                    tickCount={5}
+                    width={48}
+                    label={yLabel("Risk score (0–100)")}
                   />
-                  <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={{ strokeDasharray: "3 3" }}
+                    content={
+                      <ChartTooltip
+                        fields={[
+                          { key: "pop", label: "Population", format: fmtInt },
+                          { key: "risk", label: "Risk score", unit: "/100" },
+                        ]}
+                        title={(_l, d) => `Ward ${d.label ?? ""}`}
+                      />
+                    }
+                  />
                   <Scatter
                     data={scatter}
                     fill="#f97316"
@@ -301,28 +341,33 @@ export function AnalyticsView({ summary, wards }: Props) {
           </CardHeader>
           <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-6">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart
-                data={[...valid]
-                  .sort((a, b) => a.riskScore - b.riskScore)
-                  .slice(0, 50)
-                  .map((w) => ({
-                    r: +(w.riskScore * 100).toFixed(1),
-                    wbgt: w.wbgt ?? 0,
-                  }))}
-              >
+              <LineChart data={wbgtLine}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                 <XAxis
                   dataKey="r"
-                  tick={{ fontSize: 11 }}
-                  label={{
-                    value: "Risk →",
-                    position: "insideBottom",
-                    offset: -4,
-                    fontSize: 11,
-                  }}
+                  type="number"
+                  domain={wbgtLineX}
+                  tick={AXIS_TICK}
+                  tickCount={6}
+                  height={48}
+                  label={xLabel("Risk score (0–100)")}
                 />
-                <YAxis tick={{ fontSize: 11 }} width={40} />
-                <Tooltip />
+                <YAxis
+                  domain={wbgtLineY}
+                  tick={AXIS_TICK}
+                  tickCount={5}
+                  width={48}
+                  label={yLabel("WBGT (°C)")}
+                />
+                <Tooltip
+                  animationDuration={0}
+                  content={
+                    <ChartTooltip
+                      fields={[{ key: "wbgt", label: "WBGT", unit: " °C" }]}
+                      title={(l) => `Risk ${l}/100`}
+                    />
+                  }
+                />
                 <Legend wrapperStyle={{ fontSize: 12 }} />
                 <Line
                   type="monotone"
@@ -359,24 +404,35 @@ export function AnalyticsView({ summary, wards }: Props) {
                     type="number"
                     dataKey="exp"
                     name="Exposure"
-                    domain={[0, 100]}
-                    tick={{ fontSize: 11 }}
-                    label={{
-                      value: "Exposure →",
-                      position: "insideBottom",
-                      offset: -4,
-                      fontSize: 11,
-                    }}
+                    domain={expDom}
+                    tick={AXIS_TICK}
+                    tickCount={6}
+                    height={48}
+                    label={xLabel("Exposure (0–100)")}
                   />
                   <YAxis
                     type="number"
                     dataKey="vuln"
                     name="Vulnerability"
-                    domain={[0, 100]}
-                    tick={{ fontSize: 11 }}
-                    width={40}
+                    domain={vulnDom}
+                    tick={AXIS_TICK}
+                    tickCount={5}
+                    width={52}
+                    label={yLabel("Vulnerability (0–100)")}
                   />
-                  <Tooltip cursor={{ strokeDasharray: "3 3" }} />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={{ strokeDasharray: "3 3" }}
+                    content={
+                      <ChartTooltip
+                        title={null}
+                        fields={[
+                          { key: "exp", label: "Exposure", unit: "/100" },
+                          { key: "vuln", label: "Vulnerability", unit: "/100" },
+                        ]}
+                      />
+                    }
+                  />
                   <Scatter
                     data={valid
                       .slice(0, 80)
@@ -424,14 +480,28 @@ export function AnalyticsView({ summary, wards }: Props) {
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                   <XAxis
                     dataKey="bucket"
-                    tick={{ fontSize: 10 }}
-                    interval={0}
-                    angle={-20}
-                    dy={10}
-                    height={40}
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    minTickGap={16}
+                    height={48}
+                    label={xLabel("Thermal stress (0–100)")}
                   />
-                  <YAxis tick={{ fontSize: 11 }} width={30} />
-                  <Tooltip />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    width={44}
+                    allowDecimals={false}
+                    label={yLabel("Wards")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={BAR_CURSOR}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "count", label: "Wards" }]}
+                        unit=" wards"
+                      />
+                    }
+                  />
                   <Bar
                     dataKey="count"
                     fill="#06b6d4"
@@ -452,14 +522,32 @@ export function AnalyticsView({ summary, wards }: Props) {
             <CardHeader className="pb-2"><CardTitle className="text-sm">Heat Index (°C) distribution</CardTitle></CardHeader>
             <CardContent className="h-[240px] w-full min-w-0 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={Array.from({ length: 8 }, (_, i) => {
-                  const lo = 20 + i * 5, hi = lo + 5;
-                  return { bucket: `${lo}–${hi}`, count: (wards as any[]).filter((w: any) => w.heatIndex != null && w.heatIndex >= lo && w.heatIndex < hi).length };
-                })}>
+                <BarChart data={hiBins}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} angle={-20} dy={10} height={36} />
-                  <YAxis tick={{ fontSize: 11 }} width={28} />
-                  <Tooltip />
+                  <XAxis
+                    dataKey="bucket"
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    minTickGap={12}
+                    height={48}
+                    label={xLabel("Heat index (°C)")}
+                  />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    width={40}
+                    allowDecimals={false}
+                    label={yLabel("Wards")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={BAR_CURSOR}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "count", label: "Wards" }]}
+                        unit=" wards"
+                      />
+                    }
+                  />
                   <Bar dataKey="count" fill="#f97316" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
                 </BarChart>
               </ResponsiveContainer>
@@ -471,14 +559,32 @@ export function AnalyticsView({ summary, wards }: Props) {
             <CardHeader className="pb-2"><CardTitle className="text-sm">WBGT (°C) distribution</CardTitle></CardHeader>
             <CardContent className="h-[240px] w-full min-w-0 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={Array.from({ length: 8 }, (_, i) => {
-                  const lo = 15 + i * 3, hi = lo + 3;
-                  return { bucket: `${lo}–${hi}`, count: valid.filter((w) => w.wbgt != null && w.wbgt >= lo && w.wbgt < hi).length };
-                })}>
+                <BarChart data={wbgtBins}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} angle={-20} dy={10} height={36} />
-                  <YAxis tick={{ fontSize: 11 }} width={28} />
-                  <Tooltip />
+                  <XAxis
+                    dataKey="bucket"
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    minTickGap={12}
+                    height={48}
+                    label={xLabel("WBGT (°C)")}
+                  />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    width={40}
+                    allowDecimals={false}
+                    label={yLabel("Wards")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={BAR_CURSOR}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "count", label: "Wards" }]}
+                        unit=" wards"
+                      />
+                    }
+                  />
                   <Bar dataKey="count" fill="#ef4444" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
                 </BarChart>
               </ResponsiveContainer>
@@ -495,9 +601,30 @@ export function AnalyticsView({ summary, wards }: Props) {
                   return { bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`, count: valid.filter((w) => (w.vulnerability ?? 0) >= lo && (w.vulnerability ?? 0) < hi + (i === 9 ? 0.001 : 0)).length };
                 })}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="bucket" tick={{ fontSize: 10 }} interval={0} angle={-20} dy={10} height={36} />
-                  <YAxis tick={{ fontSize: 11 }} width={28} />
-                  <Tooltip />
+                  <XAxis
+                    dataKey="bucket"
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    minTickGap={12}
+                    height={48}
+                    label={xLabel("Vulnerability (0–100)")}
+                  />
+                  <YAxis
+                    tick={AXIS_TICK}
+                    width={40}
+                    allowDecimals={false}
+                    label={yLabel("Wards")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={BAR_CURSOR}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "count", label: "Wards" }]}
+                        unit=" wards"
+                      />
+                    }
+                  />
                   <Bar dataKey="count" fill="#a855f7" radius={[4, 4, 0, 0]} isAnimationActive={chartAnim} />
                 </BarChart>
               </ResponsiveContainer>
@@ -551,6 +678,10 @@ function CityTrend() {
   );
   const days = data?.days ?? [];
   if (days.length < 2) return null;
+  const pts = days.map((d) => ({
+    d: d.date.slice(5),
+    risk: +(d.avgRisk * 100).toFixed(1),
+  }));
   return (
     <div className="min-w-0">
       <Card className="overflow-hidden">
@@ -561,16 +692,27 @@ function CityTrend() {
         </CardHeader>
         <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-6">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart
-              data={days.map((d) => ({
-                d: d.date.slice(5),
-                risk: +(d.avgRisk * 100).toFixed(1),
-              }))}
-            >
+            <LineChart data={pts}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-              <XAxis dataKey="d" tick={{ fontSize: 11 }} />
-              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} width={40} />
-              <Tooltip />
+              <XAxis
+                dataKey="d"
+                tick={AXIS_TICK}
+                interval="preserveStartEnd"
+                minTickGap={16}
+                height={48}
+                label={xLabel("Date")}
+              />
+              <YAxis
+                domain={domainRaw(pts.map((p) => p.risk))}
+                tick={AXIS_TICK}
+                tickCount={5}
+                width={48}
+                label={yLabel("Mean risk (0–100)")}
+              />
+              <Tooltip
+                animationDuration={0}
+                content={<ChartTooltip unit="/100" />}
+              />
               <Line
                 type="monotone"
                 dataKey="risk"

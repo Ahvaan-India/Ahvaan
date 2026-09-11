@@ -1,10 +1,11 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Download, MapPin } from "lucide-react";
+import { X, Download, MapPin, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RiskBadge } from "@/components/console/RiskBadge";
 import { getWardLocality } from "@/lib/geo/wardNames";
+import { useRouter } from "next/navigation";
 import type { Telemetry } from "@/components/console/TelemetryPanel";
 import type { MapWard } from "@/components/map/KolkataMap";
 
@@ -19,10 +20,12 @@ interface Props {
 }
 
 export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDownload, children }: Props) {
+  const router = useRouter();
   if (!selectedId) return null;
 
   const ward = selectedCell?.ward ?? (telemetry as any)?.ward ?? null;
   const locality = getWardLocality(ward);
+  const openAnalytics = () => router.push(`/analysis?ward=${selectedId}`);
 
   return (
     <>
@@ -54,6 +57,12 @@ export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDo
               </div>
             </div>
             <div className="custom-scrollbar flex-1 overflow-y-auto p-4">{children}</div>
+            {/* Fixed footer — always visible, outside the scroll area */}
+            <div className="shrink-0 border-t bg-card p-3">
+              <Button className="w-full" onClick={openAnalytics}>
+                <BarChart3 className="h-4 w-4" /> View full analytics
+              </Button>
+            </div>
           </motion.aside>
         )}
       </AnimatePresence>
@@ -66,9 +75,9 @@ export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDo
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 80, opacity: 0 }}
             transition={{ type: "spring", stiffness: 400, damping: 30 }}
-            className="fixed inset-x-0 bottom-0 z-30 max-h-[70vh] overflow-hidden rounded-t-2xl border-t bg-card shadow-2xl lg:hidden"
+            className="fixed inset-x-0 bottom-0 z-30 flex max-h-[70vh] flex-col overflow-hidden rounded-t-2xl border-t bg-card shadow-2xl lg:hidden"
           >
-            <div className="flex items-center justify-between border-b p-3">
+            <div className="flex shrink-0 items-center justify-between border-b p-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="font-bold">Ward {ward ?? selectedId}</h2>
@@ -85,7 +94,13 @@ export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDo
                 <Button variant="ghost" size="icon" onClick={onClose} className="h-8 w-8"><X className="h-4 w-4" /></Button>
               </div>
             </div>
-            <div className="custom-scrollbar max-h-[60vh] overflow-y-auto p-3">{children}</div>
+            <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-3">{children}</div>
+            {/* Fixed footer — always visible, outside the scroll area */}
+            <div className="shrink-0 border-t bg-card p-3">
+              <Button className="w-full" onClick={openAnalytics}>
+                <BarChart3 className="h-4 w-4" /> View full analytics
+              </Button>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -10,6 +10,7 @@ import {
   matchesWardQuery,
 } from "@/lib/geo/wardNames";
 import { useIsMobile } from "@/lib/hooks/useMobile";
+import { RISK_SCALE_FILLS } from "@/lib/risk";
 
 export interface MapWard {
   wardId: number;
@@ -31,13 +32,8 @@ export interface MapWard {
   ring: Array<[number, number]>;
 }
 
-export const RISK_COLORS = [
-  "#14b8a6",
-  "#eab308",
-  "#f97316",
-  "#ef4444",
-  "#991b1b",
-] as const;
+// Alias kept for existing importers (AnalyticsView, LeftSidebar, maps legend).
+export const RISK_COLORS = RISK_SCALE_FILLS;
 const NO_DATA = "#cbd5e1";
 
 const W = 640;
@@ -114,7 +110,8 @@ function layerValue(c: MapWard, layer: string): number | null {
   }
 }
 
-function layerStepFor(c: MapWard, layer: string): number | null {
+/** Ward → painted 1–5 color step for the active layer. Exported so summary UI (maps pill) buckets wards exactly as painted. */
+export function layerStepFor(c: MapWard, layer: string): number | null {
   // Risk uses fixed categories (LOW/MODERATE/HIGH/VERY_HIGH)  stable, not decimal-sensitive
   if (layer === "risk") {
     switch (c.category) {
@@ -239,6 +236,10 @@ export function KolkataMap({
   const wrapRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  // Ref mirror of the view so native listeners (wheel) and gesture
+  // callbacks always read the latest zoom/pan without re-subscribing.
+  const viewRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
+  viewRef.current = { zoom, pan };
   const [drag, setDrag] = useState<{
     sx: number;
     sy: number;
@@ -263,6 +264,43 @@ export function KolkataMap({
   const isMobile = useIsMobile();
   const prefersReduced = useReducedMotion();
   const reduceMotion = !!prefersReduced || isMobile;
+  // Measured container width (px) for the scale bar.
+  const [boxW, setBoxW] = useState(0);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      setBoxW(entries[0]?.contentRect.width ?? 0);
+    });
+    ro.observe(el);
+    setBoxW(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
+
+  // Real-world scale for the current view: full world width (W units) spans
+  // the bounds' longitude range, so meters/unit falls out directly.
+  // (Computed below, after vbW is defined.)
+  const scaleForWidth = (viewBoxW: number) => {
+    if (!boxW) return null;
+    const lonSpan = bounds.maxLon - bounds.minLon || 1;
+    const midLat = ((bounds.minLat + bounds.maxLat) / 2) * (Math.PI / 180);
+    const metersPerUnit = (lonSpan * 111320 * Math.cos(midLat)) / W;
+    const visibleMeters = viewBoxW * metersPerUnit;
+    if (!Number.isFinite(visibleMeters) || visibleMeters <= 0) return null;
+    const target = visibleMeters * 0.22;
+    const pow = Math.pow(10, Math.floor(Math.log10(target)));
+    const n = target / pow;
+    const nice = (n >= 5 ? 5 : n >= 2 ? 2 : 1) * pow;
+    const px = Math.max(
+      36,
+      Math.min(boxW * 0.4, (nice / visibleMeters) * boxW),
+    );
+    const label =
+      nice >= 1000
+        ? `${+(nice / 1000).toFixed(nice % 1000 === 0 ? 0 : 1)} km`
+        : `${Math.round(nice)} m`;
+    return { px, label };
+  };
 
   const z = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
 
@@ -287,31 +325,25 @@ export function KolkataMap({
     [isMobile],
   );
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const delta = -e.deltaY * 0.0025;
-    setZoom((v) =>
-      Math.min(MAX_Z, Math.max(MIN_Z, +(v * (1 + delta)).toFixed(2))),
-    );
-  }, []);
-
-  // Zoom keeping the point under (clientX, clientY) fixed — proper map feel
+  // Zoom keeping the point under (clientX, clientY) fixed — proper map feel.
+  // Stable identity (reads viewRef) so native listeners can use it safely.
   const zoomAtPoint = useCallback(
     (clientX: number, clientY: number, newZoom: number) => {
+      const { zoom: z0, pan: p0 } = viewRef.current;
       const rect = wrapRef.current?.getBoundingClientRect();
       if (!rect || rect.width === 0 || rect.height === 0) {
         setZoom(newZoom);
         return;
       }
-      const z1 = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
+      const z1 = Math.min(MAX_Z, Math.max(MIN_Z, z0));
       const z2 = Math.min(MAX_Z, Math.max(MIN_Z, newZoom));
       if (z1 === z2) return;
       const fx = (clientX - rect.left) / rect.width;
       const fy = (clientY - rect.top) / rect.height;
       const vbW1 = W / z1;
       const vbH1 = H / z1;
-      const worldX = W / 2 - vbW1 / 2 - pan.x + fx * vbW1;
-      const worldY = H / 2 - vbH1 / 2 - pan.y + fy * vbH1;
+      const worldX = W / 2 - vbW1 / 2 - p0.x + fx * vbW1;
+      const worldY = H / 2 - vbH1 / 2 - p0.y + fy * vbH1;
       const vbW2 = W / z2;
       const vbH2 = H / z2;
       setZoom(z2);
@@ -320,20 +352,45 @@ export function KolkataMap({
         y: H / 2 - vbH2 / 2 + fy * vbH2 - worldY,
       });
     },
-    [zoom, pan],
+    [],
   );
+
+  // Native non-passive wheel listener: React attaches wheel passively at the
+  // root, so e.preventDefault() in onWheel is ignored and the page scrolls
+  // instead of zooming. This keeps scroll-to-zoom (and trackpad pinch,
+  // which arrives as ctrlKey+wheel) on the map.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const onWheelNative = (e: WheelEvent) => {
+      e.preventDefault();
+      const step = e.ctrlKey ? 0.01 : 0.0025;
+      const nz = viewRef.current.zoom * (1 - e.deltaY * step);
+      zoomAtPoint(e.clientX, e.clientY, nz);
+    };
+    el.addEventListener("wheel", onWheelNative, { passive: false });
+    return () => el.removeEventListener("wheel", onWheelNative);
+  }, [zoomAtPoint]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     downRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
-    // Two fingers → start pinch, cancel single-finger drag
+    // Two fingers → start pinch, cancel single-finger drag.
+    // Capture the pointer so move events keep flowing to the map even if a
+    // finger slides off the element mid-gesture (mobile pinch reliability).
+    // Single-finger path stays uncaptured so polygon tap/click still works.
     if (pointersRef.current.size === 2) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* noop */
+      }
       const [a, b] = [...pointersRef.current.values()];
       const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
       pinchRef.current = {
         startDist: dist,
-        startZoom: zoom,
-        startPan: { ...pan },
+        startZoom: viewRef.current.zoom,
+        startPan: { ...viewRef.current.pan },
         startMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       };
       setDrag(null);
@@ -466,7 +523,6 @@ export function KolkataMap({
         setTip(null);
       }}
       onPointerDown={handlePointerDown}
-      onWheel={handleWheel}
       onDoubleClick={(e) => {
         // Desktop double-click to zoom in, anchored at cursor
         zoomAtPoint(e.clientX, e.clientY, zoom + 1);
@@ -647,6 +703,26 @@ export function KolkataMap({
         })}
       </svg>
 
+      {/* Scale bar — real-world distance for the current zoom */}
+      {(() => {
+        const s = scaleForWidth(vbW);
+        if (!s) return null;
+        return (
+          <div
+            className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2"
+            aria-hidden
+          >
+            <div className="mb-0.5 rounded bg-card/70 px-1 text-center text-[10px] font-bold tabular-nums text-foreground/80">
+              {s.label}
+            </div>
+            <div
+              className="mx-auto h-1.5 rounded-sm border border-foreground/60 border-t-0 bg-foreground/10"
+              style={{ width: s.px }}
+            />
+          </div>
+        );
+      })()}
+
       {/* Zoom controls  Google Maps style vertical stack */}
       <div className="absolute bottom-4 right-3 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform">
         <button
@@ -722,7 +798,7 @@ export function KolkataMap({
                     ? "Exposure"
                     : "Vuln"}
         </span>
-        {["#14b8a6", "#eab308", "#f97316", "#ef4444", "#991b1b"].map((c, i) => (
+        {RISK_COLORS.map((c) => (
           <span
             key={c}
             className="h-2.5 w-6 rounded-full"

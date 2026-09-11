@@ -1,6 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
+import { riskFillTwForCategory, riskOnFillTwForCategory } from "@/lib/risk";
 
 /**
  * Single severity badge used everywhere risk/alarm state appears (alert
@@ -31,10 +32,8 @@ export function RiskBadge({
     <span
       className={cn(
         "inline-block rounded px-2 py-0.5 text-[11px] font-bold",
-        key === "VERY_HIGH" && "bg-[#991b1b] text-white",
-        key === "HIGH" && "bg-[#ef4444] text-white",
-        key === "MODERATE" && "bg-[#eab308] text-black",
-        key === "LOW" && "bg-[#14b8a6] text-white",
+        riskFillTwForCategory(category),
+        riskOnFillTwForCategory(category),
         className,
       )}
     >

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { riskFillForCategory, riskPanelClass } from "@/lib/risk";
 import { TopBar } from "@/components/console/TopBar";
 import { LeftNav } from "@/components/layout/LeftNav";
-import { KolkataMap, type MapWard, RISK_COLORS } from "@/components/map/KolkataMap";
+import { KolkataMap, type MapWard, RISK_COLORS, layerStepFor } from "@/components/map/KolkataMap";
 import { WardInfoBar } from "@/components/console/WardInfoBar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -143,6 +143,89 @@ function WardDetailBody({ telemetry, forecast, selectedCell, selectedId }: any) 
   );
 }
 
+/** Raw layer value per ward (mirrors the map's layerValue). */
+function layerNumber(cell: any, lyr: MapLayer): number | null {
+  const v =
+    lyr === "thermal" ? cell.thermal
+    : lyr === "exposure" ? cell.exposure
+    : lyr === "vulnerability" ? cell.vulnerability
+    : lyr === "wbgt" ? cell.wbgt
+    : lyr === "hi" ? cell.heatIndex
+    : null;
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Pill bands per non-risk layer. Edges match the map's painted steps
+ * (step 1 → Low, 2–3 → Moderate, 4 → High, 5 → Extreme):
+ * 0–1 layers break at .2/.4/.6/.8, WBGT at (v−15)/25, Heat Index at (v−20)/35.
+ */
+const LAYER_PILL_META: Record<
+  Exclude<MapLayer, "risk">,
+  {
+    bands: { cat: string; label: string; hint: string }[];
+    fmt: (v: number) => string;
+    suffix: string;
+    avgHint: string;
+  }
+> = {
+  thermal: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Thermal stress < 20" },
+      { cat: "MODERATE", label: "Moderate", hint: "Thermal stress 20–60" },
+      { cat: "HIGH", label: "High", hint: "Thermal stress 60–80" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Thermal stress ≥ 80" },
+    ],
+    fmt: (v) => (v * 100).toFixed(0),
+    suffix: "/100",
+    avgHint: "Mean thermal stress across visible wards (×100)",
+  },
+  exposure: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Exposure < 20" },
+      { cat: "MODERATE", label: "Moderate", hint: "Exposure 20–60" },
+      { cat: "HIGH", label: "High", hint: "Exposure 60–80" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Exposure ≥ 80" },
+    ],
+    fmt: (v) => (v * 100).toFixed(0),
+    suffix: "/100",
+    avgHint: "Mean exposure across visible wards (×100)",
+  },
+  vulnerability: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Vulnerability < 20" },
+      { cat: "MODERATE", label: "Moderate", hint: "Vulnerability 20–60" },
+      { cat: "HIGH", label: "High", hint: "Vulnerability 60–80" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Vulnerability ≥ 80" },
+    ],
+    fmt: (v) => (v * 100).toFixed(0),
+    suffix: "/100",
+    avgHint: "Mean vulnerability across visible wards (×100)",
+  },
+  wbgt: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "WBGT < 20°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "WBGT 20–30°C" },
+      { cat: "HIGH", label: "High", hint: "WBGT 30–35°C" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "WBGT ≥ 35°C" },
+    ],
+    fmt: (v) => `${v.toFixed(1)}°`,
+    suffix: "C",
+    avgHint: "Mean WBGT across visible wards",
+  },
+  hi: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Heat index < 27°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "Heat index 27–41°C" },
+      { cat: "HIGH", label: "High", hint: "Heat index 41–48°C" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Heat index ≥ 48°C" },
+    ],
+    fmt: (v) => `${v.toFixed(1)}°`,
+    suffix: "C",
+    avgHint: "Mean heat index across visible wards",
+  },
+};
+
 export default function MapsPage() {
   const { selectedId, setSelectedId } = useWard();
   const [hoveredId, setHoveredId] = useState<number | null>(null);
@@ -175,6 +258,47 @@ export default function MapsPage() {
     if (c.wardId === selectedId) return true;
     return true;
   }), [cells, filters, selectedId]);
+
+  // Layer-aware pill data: distribution buckets always match what the map
+  // paints for the active layer (risk uses engine categories; every other
+  // layer buckets wards by their painted 1–5 step: 1 Low, 2–3 Moderate,
+  // 4 High, 5 Extreme). Trailing chip is Load for risk, layer mean otherwise.
+  const pill = useMemo(() => {
+    if (layer === "risk") {
+      return {
+        bands: [
+          { label: "Low", cat: "LOW", v: summary?.low ?? 0, hint: "Wards in LOW band (risk < 0.30)" },
+          { label: "Moderate", cat: "MODERATE", v: summary?.moderate ?? 0, hint: "Wards in MODERATE band (risk 0.30–0.50)" },
+          { label: "High", cat: "HIGH", v: summary?.high ?? 0, hint: "Wards in HIGH band (risk 0.50–0.65)" },
+          { label: "Extreme", cat: "VERY_HIGH", v: summary?.extreme ?? 0, hint: "Wards in VERY_HIGH band (risk ≥ 0.65)" },
+        ],
+        avgLabel: "Load",
+        avg: summary ? String(summary.metroHeatLoad) : "—",
+        avgSuffix: "/100",
+        avgHint: "Metropolitan Heat Load — mean ward risk × 100",
+      };
+    }
+    const meta = LAYER_PILL_META[layer];
+    const counts: Record<string, number> = { LOW: 0, MODERATE: 0, HIGH: 0, VERY_HIGH: 0 };
+    let sum = 0;
+    let n = 0;
+    for (const c of filteredCells) {
+      const v = layerNumber(c, layer);
+      if (v === null) continue;
+      sum += v;
+      n += 1;
+      const step = layerStepFor(c as MapWard, layer) ?? 1;
+      const band = step <= 1 ? "LOW" : step <= 3 ? "MODERATE" : step === 4 ? "HIGH" : "VERY_HIGH";
+      counts[band] += 1;
+    }
+    return {
+      bands: meta.bands.map((b) => ({ ...b, v: counts[b.cat] ?? 0 })),
+      avgLabel: "Avg",
+      avg: n > 0 ? meta.fmt(sum / n) : "—",
+      avgSuffix: meta.suffix,
+      avgHint: meta.avgHint,
+    };
+  }, [layer, summary, filteredCells]);
 
   const downloadTelemetry = useCallback(() => {
     if (!telemetry) return;
@@ -212,25 +336,22 @@ export default function MapsPage() {
             ) : (
               <KolkataMap cells={filteredCells} selectedId={selectedId} hoveredId={hoveredId} onSelect={(id) => setSelectedId(id)} onHover={setHoveredId} searchQuery={deferredSearch} layer={layer} />
             )}
-            {/* Category pill — Active / Extreme / High / Moderate / Load */}
+            {/* Layer-aware summary pill — distribution always matches the
+                painted layer (risk bands for risk, painted-step bands + layer
+                mean for every other layer) */}
             {summary && (
               <div className="pointer-events-none absolute left-1/2 top-3 z-20 hidden -translate-x-1/2 sm:flex">
                 <div className="flex items-center gap-1.5 rounded-full border bg-card p-1.5 shadow-xl backdrop-blur">
-                  {[
-                    { label: "Low", v: summary.low, c: "#14b8a6", hint: "Wards in LOW band (risk < 0.30)" },
-                    { label: "Moderate", v: summary.moderate, c: "#eab308", hint: "Wards in MODERATE band (risk 0.30–0.50)" },
-                    { label: "High", v: summary.high, c: "#ef4444", hint: "Wards in HIGH band (risk 0.50–0.65)" },
-                    { label: "Extreme", v: summary.extreme, c: "#991b1b", hint: "Wards in VERY_HIGH band (risk ≥ 0.65)" },
-                  ].map((k) => (
+                  {pill.bands.map((k) => (
                     <span key={k.label} title={k.hint} className="flex cursor-help items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
-                      <span className="h-2 w-2 rounded-full" style={{ background: k.c }} />
+                      <span className="h-2 w-2 rounded-full" style={{ background: riskFillForCategory(k.cat) }} />
                       {k.label} <span className="font-black tabular-nums">{k.v}</span>
                     </span>
                   ))}
-                  <span title="Metropolitan Heat Load — mean ward risk × 100" className="flex cursor-help items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
+                  <span title={pill.avgHint} className="flex cursor-help items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs font-semibold text-foreground">
                     <Layers className="h-3.5 w-3.5 text-muted-foreground" />
-                    Load <span className="font-black tabular-nums">{summary.metroHeatLoad}</span>
-                    <span className="font-normal text-muted-foreground">/100</span>
+                    {pill.avgLabel} <span className="font-black tabular-nums">{pill.avg}</span>
+                    <span className="font-normal text-muted-foreground">{pill.avgSuffix}</span>
                   </span>
                 </div>
               </div>

@@ -12,6 +12,7 @@ import {
   Legend,
   BarChart,
   Bar,
+  Cell,
   RadarChart,
   PolarGrid,
   PolarAngleAxis,
@@ -21,7 +22,27 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
+import { SubCard } from "@/components/console/SubCard";
 import { getWardDisplayName } from "@/lib/geo/wardNames";
+import { riskFillForCategory } from "@/lib/risk";
+import { ChartTooltip } from "@/components/console/ChartTooltip";
+import { cn } from "@/lib/utils";
+import {
+  AXIS_TICK,
+  xLabel,
+  yLabel,
+  domain100,
+  domainRaw,
+  ceilNice,
+} from "@/lib/chartAxis";
+import {
+  Activity,
+  Flame,
+  CalendarDays,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+} from "lucide-react";
 
 const jsonFetch = (u: string) =>
   fetch(u).then((r) => {
@@ -32,9 +53,11 @@ const jsonFetch = (u: string) =>
 export function WardAnalysis({
   wardId,
   ward,
+  cityMean,
 }: {
   wardId: number | null;
   ward: number | null;
+  cityMean?: number | null;
 }) {
   const { data: trend } = useSWR<{
     wardId: number;
@@ -71,15 +94,53 @@ export function WardAnalysis({
   const fc = forecast?.days ?? [];
   const hasHist = hist.length > 1;
   const latest = hist[hist.length - 1] ?? null;
+
+  // 14-day stats from real history (replaces placeholder radar values).
+  const risks = hist.map((h) => h.risk * 100);
+  const avgRisk = risks.length
+    ? risks.reduce((s, v) => s + v, 0) / risks.length
+    : 0;
+  const worst = hist.reduce(
+    (m, h) => (h.risk > (m?.risk ?? -1) ? h : m),
+    null as (typeof hist)[number] | null,
+  );
+  const highDays = hist.filter((h) => h.risk >= 0.5).length;
+  const highPct = hist.length ? (highDays / hist.length) * 100 : 0;
+  const delta3 =
+    hist.length >= 4
+      ? (hist[hist.length - 1].risk - hist[hist.length - 4].risk) * 100
+      : 0;
+  const trendDir = delta3 > 1 ? "up" : delta3 < -1 ? "down" : "flat";
+  const maxFc = fc.length ? Math.max(...fc.map((f) => f.risk * 100)) : 0;
   const radarData = latest
     ? [
         { subject: "Thermal", value: +(latest.thermal * 100).toFixed(1) },
-        { subject: "Exposure", value: 55 },
-        { subject: "Vuln", value: 25 },
-        { subject: "Persist", value: latest ? 50 : 0 },
-        { subject: "WBGT", value: latest.wbgt ? Math.min(100, ((latest.wbgt - 15) / 25) * 100) : 0 },
+        {
+          subject: "WBGT",
+          value: latest.wbgt
+            ? +Math.min(100, ((latest.wbgt - 15) / 25) * 100).toFixed(1)
+            : 0,
+        },
+        { subject: "Persistence", value: +highPct.toFixed(1) },
+        { subject: "Avg risk", value: +avgRisk.toFixed(1) },
+        { subject: "Peak Fc", value: +maxFc.toFixed(1) },
       ]
     : [];
+  const timelineRisks = [
+    ...hist.map((h) => h.risk * 100),
+    ...fc.map((f) => f.risk * 100),
+  ];
+  const timelineDom = domain100(timelineRisks);
+  const thermalDom = domain100(hist.map((h) => h.thermal * 100));
+  const wbgtDom = domainRaw(hist.map((h) => h.wbgt));
+  const fcDom: [number, number] = [
+    0,
+    ceilNice(Math.max(0, ...fc.map((f) => f.risk * 100))),
+  ];
+  const latestDelta =
+    latest && cityMean != null
+      ? latest.risk * 100 - cityMean
+      : null;
 
   return (
     <div className="space-y-6">
@@ -91,6 +152,135 @@ export function WardAnalysis({
           {hist.length} snapshots · {fc.length} forecast days · {latest ? `latest risk ${(latest.risk * 100).toFixed(1)}/100` : "no history yet"} · tap another ward to switch
         </p>
       </div>
+
+      {/* 14-day stat tiles */}
+      {hist.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <SubCard
+            icon={Activity}
+            label="Avg risk · 14d"
+            value={avgRisk.toFixed(1)}
+            unit="/100"
+          />
+          <SubCard
+            icon={Flame}
+            label="Worst day"
+            value={worst ? (worst.risk * 100).toFixed(0) : "-"}
+            unit="/100"
+            qualifier={worst ? worst.date.slice(5) : null}
+            qualifierTone="high"
+          />
+          <SubCard
+            icon={CalendarDays}
+            label="Days High+"
+            value={`${highDays}/${hist.length}`}
+            qualifier={`${highPct.toFixed(0)}% of days`}
+            qualifierTone={highPct >= 50 ? "extreme" : highPct >= 25 ? "high" : "moderate"}
+          />
+          <SubCard
+            icon={trendDir === "up" ? TrendingUp : trendDir === "down" ? TrendingDown : Minus}
+            label="3-day trend"
+            value={`${delta3 >= 0 ? "+" : ""}${delta3.toFixed(1)}`}
+            unit="pts"
+            qualifier={trendDir === "up" ? "Rising" : trendDir === "down" ? "Falling" : "Steady"}
+            qualifierTone={trendDir === "up" ? "high" : trendDir === "down" ? "low" : "moderate"}
+          />
+        </div>
+      )}
+
+      {/* Daily risk stripe: past 14d + next 5d at a glance.
+          One column per day — color is the risk category, labels name the
+          date, the ring marks the worst day, "Now" splits observed/forecast. */}
+      {(hist.length > 0 || fc.length > 0) && (
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Daily risk stripe — history + outlook</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Solid blocks are observed days, faded blocks are the 5-day
+              forecast. The ringed block is the worst day.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start gap-1">
+              {hist.map((h, i) => {
+                const isWorst = worst != null && h.date === worst.date;
+                return (
+                  <div
+                    key={`h-${h.date}`}
+                    className="min-w-0 flex-1"
+                    title={`${h.date}: risk ${(h.risk * 100).toFixed(0)}/100 (${h.category})${isWorst ? " — worst day" : ""}`}
+                  >
+                    <div
+                      className={cn(
+                        "h-10 w-full cursor-help rounded",
+                        isWorst && "ring-2 ring-foreground",
+                      )}
+                      style={{ background: riskFillForCategory(h.category) }}
+                    />
+                    <p
+                      className={cn(
+                        "mt-1 text-center text-[9px] tabular-nums text-muted-foreground",
+                        i % 2 === 1 && "hidden min-[480px]:block",
+                      )}
+                    >
+                      {h.date.slice(5)}
+                    </p>
+                  </div>
+                );
+              })}
+              {hist.length > 0 && fc.length > 0 && (
+                <div className="flex shrink-0 flex-col items-center" aria-hidden>
+                  <div className="h-10 w-px bg-foreground/50" />
+                  <p className="mt-1 text-[9px] font-black uppercase tracking-wide">
+                    Now
+                  </p>
+                </div>
+              )}
+              {fc.map((f, i) => (
+                <div
+                  key={`f-${f.date}`}
+                  className="min-w-0 flex-1"
+                  title={`Forecast ${f.date}: risk ${(f.risk * 100).toFixed(0)}/100 (${f.category})`}
+                >
+                  <div
+                    className="h-10 w-full cursor-help rounded opacity-50 ring-1 ring-inset ring-foreground/30"
+                    style={{ background: riskFillForCategory(f.category) }}
+                  />
+                  <p
+                    className={cn(
+                      "mt-1 text-center text-[9px] tabular-nums text-muted-foreground",
+                      (hist.length + i) % 2 === 1 && "hidden min-[480px]:block",
+                    )}
+                  >
+                    {f.date.slice(5)}
+                  </p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+              <span className="tabular-nums">
+                {hist.length ? hist[0].date.slice(5) : ""}
+                {hist.length && fc.length ? " → " : ""}
+                {fc.length
+                  ? fc[fc.length - 1].date.slice(5)
+                  : hist.length
+                    ? hist[hist.length - 1].date.slice(5)
+                    : ""}
+              </span>
+              <span className="flex items-center gap-3">
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-sm bg-foreground/60" />
+                  Observed
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="h-2 w-2 rounded-sm bg-foreground/30 ring-1 ring-inset ring-foreground/40" />
+                  Forecast
+                </span>
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="overflow-hidden">
         <CardHeader className="pb-2">
@@ -119,9 +309,25 @@ export function WardAnalysis({
                 margin={{ left: 8, right: 12, top: 8, bottom: 8 }}
               >
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-                <Tooltip />
+                <XAxis
+                  dataKey="label"
+                  tick={AXIS_TICK}
+                  interval="preserveStartEnd"
+                  minTickGap={20}
+                  height={48}
+                  label={xLabel("Date")}
+                />
+                <YAxis
+                  domain={timelineDom}
+                  tick={AXIS_TICK}
+                  tickCount={5}
+                  width={48}
+                  label={yLabel("Risk score (0–100)")}
+                />
+                <Tooltip
+                  animationDuration={0}
+                  content={<ChartTooltip />}
+                />
                 <Legend />
                 <Line
                   type="monotone"
@@ -156,20 +362,48 @@ export function WardAnalysis({
                   }))}
                 >
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="d" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} />
-                  <Tooltip />
+                  <XAxis
+                    dataKey="d"
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    minTickGap={20}
+                    height={48}
+                    label={xLabel("Date")}
+                  />
+                  <YAxis
+                    yAxisId="left"
+                    domain={thermalDom}
+                    tick={AXIS_TICK}
+                    tickCount={5}
+                    width={48}
+                    label={yLabel("Thermal (0–100)")}
+                  />
+                  <YAxis
+                    yAxisId="right"
+                    orientation="right"
+                    domain={wbgtDom}
+                    tick={AXIS_TICK}
+                    tickCount={5}
+                    width={44}
+                    label={yLabel("WBGT (°C)")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    content={<ChartTooltip />}
+                  />
                   <Legend />
                   <Line
+                    yAxisId="left"
                     type="monotone"
                     dataKey="thermal"
-                    name="Thermal �-100"
+                    name="Thermal (0–100)"
                     dot={false}
                     stroke="#0ea5e9"
                     strokeWidth={2}
                     isAnimationActive={false}
                   />
                   <Line
+                    yAxisId="right"
                     type="monotone"
                     dataKey="wbgt"
                     name="WBGT °C"
@@ -201,6 +435,19 @@ export function WardAnalysis({
                     {(hist[hist.length - 1].risk * 100).toFixed(1)}
                   </span>
                 </div>
+                {cityMean != null && (
+                  <div className="flex items-baseline justify-between rounded-lg bg-muted/40 px-3 py-2">
+                    <span className="text-sm text-muted-foreground">
+                      City mean (now)
+                    </span>
+                    <span className="text-sm font-bold tabular-nums">
+                      {cityMean.toFixed(1)}{" "}
+                      <span className={latestDelta != null && latestDelta > 0 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}>
+                        ({latestDelta != null && latestDelta >= 0 ? "+" : ""}{latestDelta?.toFixed(1)})
+                      </span>
+                    </span>
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-1">
                   {hist.slice(-5).map((h) => (
                     <Badge
@@ -236,8 +483,11 @@ export function WardAnalysis({
                   <PolarGrid />
                   <PolarAngleAxis dataKey="subject" tick={{ fontSize: 11 }} />
                   <PolarRadiusAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                  <Radar dataKey="value" stroke="#ef4444" fill="#ef4444" fillOpacity={0.4} isAnimationActive={false} />
-                  <Tooltip />
+                  <Radar dataKey="value" name="Score" stroke="#ef4444" fill="#ef4444" fillOpacity={0.4} isAnimationActive={false} />
+                  <Tooltip
+                    animationDuration={0}
+                    content={<ChartTooltip unit="/100" />}
+                  />
                 </RadarChart>
               </ResponsiveContainer>
             ) : <Skeleton className="h-full w-full" />}
@@ -248,12 +498,37 @@ export function WardAnalysis({
           <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-4">
             {fc.length ? (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={fc.map((f) => ({ date: f.date.slice(5), risk: +(f.risk * 100).toFixed(1) }))}>
+                <BarChart data={fc.map((f) => ({ date: f.date.slice(5), risk: +(f.risk * 100).toFixed(1), category: f.category }))}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="risk" fill="#f97316" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                  <XAxis
+                    dataKey="date"
+                    tick={AXIS_TICK}
+                    interval="preserveStartEnd"
+                    height={48}
+                    label={xLabel("Date")}
+                  />
+                  <YAxis
+                    domain={fcDom}
+                    tick={AXIS_TICK}
+                    tickCount={5}
+                    width={48}
+                    label={yLabel("Risk score (0–100)")}
+                  />
+                  <Tooltip
+                    animationDuration={0}
+                    cursor={{ fill: "hsl(var(--muted))", fillOpacity: 0.35 }}
+                    content={
+                      <ChartTooltip
+                        fields={[{ key: "risk", label: "Risk score" }]}
+                        unit="/100"
+                      />
+                    }
+                  />
+                  <Bar dataKey="risk" radius={[6, 6, 0, 0]} isAnimationActive={false}>
+                    {fc.map((f) => (
+                      <Cell key={f.date} fill={riskFillForCategory(f.category)} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             ) : <Skeleton className="h-full w-full" />}
