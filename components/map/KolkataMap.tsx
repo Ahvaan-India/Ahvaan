@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, memo, useCallback, useEffect } from "react";
-import { ZoomIn, ZoomOut, LocateFixed, Maximize2 } from "lucide-react";
+import { ZoomIn, ZoomOut, LocateFixed, Maximize2, Navigation } from "lucide-react";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { RiskBadge } from "@/components/console/RiskBadge";
 import {
@@ -48,12 +48,49 @@ export interface MapBounds {
   maxLat: number;
 }
 
+/**
+ * Web-Mercator projection into viewBox units. Mercator (not equirectangular)
+ * so slippy-map base tiles underneath align exactly with the ward polygons.
+ */
+function mercX(lon: number): number {
+  return (lon + 180) / 360;
+}
+function mercY(lat: number): number {
+  const c = Math.max(-85.0511, Math.min(85.0511, lat));
+  const rad = (c * Math.PI) / 180;
+  return (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2;
+}
 function project(lon: number, lat: number, b: MapBounds): [number, number] {
-  const mid = ((b.minLat + b.maxLat) / 2) * (Math.PI / 180);
-  const kx = Math.cos(mid);
-  const x = ((lon - b.minLon) * kx) / ((b.maxLon - b.minLon) * kx || 1);
-  const y = 1 - (lat - b.minLat) / (b.maxLat - b.minLat || 1);
-  return [x * W, y * H];
+  const fx =
+    (mercX(lon) - mercX(b.minLon)) / (mercX(b.maxLon) - mercX(b.minLon) || 1);
+  const fy =
+    (mercY(lat) - mercY(b.minLat)) / (mercY(b.maxLat) - mercY(b.minLat) || 1);
+  return [fx * W, (1 - fy) * H];
+}
+
+// Slippy-map tile math (Esri basemaps — keyless, attribution required).
+const TILE = 256;
+function lonToPx(lon: number, t: number): number {
+  return mercX(lon) * TILE * 2 ** t;
+}
+function latToPx(lat: number, t: number): number {
+  return mercY(lat) * TILE * 2 ** t;
+}
+function pxToLon(px: number, t: number): number {
+  return (px / (TILE * 2 ** t)) * 360 - 180;
+}
+function pxToLat(px: number, t: number): number {
+  const n = Math.PI * (1 - (2 * px) / (TILE * 2 ** t));
+  return (Math.atan(Math.sinh(n)) * 180) / Math.PI;
+}
+/**
+ * Keyless Esri endpoints (no signup/token). NOTE the z/y/x order — Esri's
+ * cached /tile path takes {z}/{y}/{x}, unlike OSM-style {z}/{x}/{y}.
+ */
+function tileUrl(t: number, x: number, y: number, dark: boolean): string {
+  return dark
+    ? `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${t}/${y}/${x}`
+    : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${t}/${y}/${x}`;
 }
 
 function boundsOf(cells: MapWard[]): MapBounds {
@@ -264,17 +301,31 @@ export function KolkataMap({
   const isMobile = useIsMobile();
   const prefersReduced = useReducedMotion();
   const reduceMotion = !!prefersReduced || isMobile;
-  // Measured container width (px) for the scale bar.
+  // Measured container size (px) for the scale bar + tile resolution.
   const [boxW, setBoxW] = useState(0);
+  const [boxH, setBoxH] = useState(0);
   useEffect(() => {
     const el = wrapRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver((entries) => {
-      setBoxW(entries[0]?.contentRect.width ?? 0);
+      const r = entries[0]?.contentRect;
+      setBoxW(r?.width ?? 0);
+      setBoxH(r?.height ?? 0);
     });
     ro.observe(el);
     setBoxW(el.clientWidth);
+    setBoxH(el.clientHeight);
     return () => ro.disconnect();
+  }, []);
+  // Base-map tiles follow the app theme (topo / dark-gray).
+  const [darkTiles, setDarkTiles] = useState(false);
+  useEffect(() => {
+    const el = document.documentElement;
+    const update = () => setDarkTiles(el.classList.contains("dark"));
+    update();
+    const mo = new MutationObserver(update);
+    mo.observe(el, { attributes: true, attributeFilter: ["class", "data-theme"] });
+    return () => mo.disconnect();
   }, []);
 
   // Real-world scale for the current view: full world width (W units) spans
@@ -304,25 +355,90 @@ export function KolkataMap({
 
   const z = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
 
-  // Derived viewBox with pan (pan is in viewBox units)
-  const vbW = W / z,
+  // Derived viewBox with pan (pan is in viewBox units).
+  // Aspect-fitted: the short axis expands to the container aspect, so at
+  // min zoom the whole ward map fits on one screen — never cropped, never
+  // letterboxed — at every zoom level.
+  let vbW = W / z,
     vbH = H / z;
+  const aspect = boxW > 0 && boxH > 0 ? boxW / boxH : W / H;
+  if (aspect > vbW / vbH) vbW = vbH * aspect;
+  else vbH = vbW / aspect;
   const baseX = W / 2 - vbW / 2,
     baseY = H / 2 - vbH / 2;
   const vbX = baseX - pan.x,
     vbY = baseY - pan.y;
   const vb = `${vbX} ${vbY} ${vbW} ${vbH}`;
 
+  // Slippy-map zoom picked so 1 tile px ≈ 1 screen px (crisp, not wasteful).
+  // Uses cover-scale (max of the two axes) to match the slice mapping.
+  const tileZoom = useMemo(() => {
+    const lonSpan = bounds.maxLon - bounds.minLon || 1;
+    const sx = (boxW || 800) / vbW;
+    const sy = boxH > 0 ? boxH / vbH : sx;
+    const t = Math.log2((Math.max(sx, sy) * W * 360) / (TILE * lonSpan));
+    return Math.max(10, Math.min(17, Math.round(t)));
+  }, [bounds, boxW, boxH, vbW, vbH]);
+
+  // Tiles covering the current view, positioned in viewBox units so they
+  // sit exactly under the ward polygons (same Mercator projection).
+  const tiles = useMemo(() => {
+    const t = tileZoom;
+    const S = TILE * 2 ** t;
+    const mxMin = mercX(bounds.minLon) * S;
+    const mxMax = mercX(bounds.maxLon) * S;
+    const myMin = mercY(bounds.maxLat) * S;
+    const myMax = mercY(bounds.minLat) * S;
+    const u2mx = (vx: number) => mxMin + (vx / W) * (mxMax - mxMin);
+    const u2my = (vy: number) => myMin + (vy / H) * (myMax - myMin);
+    const x0 = Math.floor(u2mx(vbX) / TILE);
+    const x1 = Math.floor(u2mx(vbX + vbW) / TILE);
+    const y0 = Math.floor(u2my(vbY) / TILE);
+    const y1 = Math.floor(u2my(vbY + vbH) / TILE);
+    const maxTile = 2 ** t - 1;
+    const out: Array<{
+      key: string;
+      url: string;
+      x: number;
+      y: number;
+      w: number;
+      h: number;
+    }> = [];
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        if (y < 0 || y > maxTile) continue;
+        const xx = (((x % (maxTile + 1)) + maxTile + 1) % (maxTile + 1)) | 0;
+        const [ax, ay] = project(pxToLon(x * TILE, t), pxToLat(y * TILE, t), bounds);
+        const [bx, by] = project(
+          pxToLon((x + 1) * TILE, t),
+          pxToLat((y + 1) * TILE, t),
+          bounds,
+        );
+        out.push({
+          key: `${t}/${xx}/${y}`,
+          url: tileUrl(t, xx, y, darkTiles),
+          // ay = north edge (smaller screen-y), by = south edge: origin at
+          // the top with positive height (was flipped before).
+          x: ax,
+          y: ay,
+          w: bx - ax,
+          h: by - ay,
+        });
+      }
+    }
+    return out;
+  }, [tileZoom, bounds, vbX, vbY, vbW, vbH, darkTiles]);
+
   const onMove = useCallback(
     (e: React.MouseEvent, cell: MapWard) => {
-      if (isMobile) return; // no hover tooltip on touch, use tap
+      if (drag) return; // suppress tooltip while dragging
       const rect = wrapRef.current?.getBoundingClientRect();
       if (!rect) return;
       const x = Math.min(e.clientX - rect.left + 14, rect.width - 188);
       const y = Math.min(e.clientY - rect.top + 14, rect.height - 120);
       setTip({ x: Math.max(x, 6), y: Math.max(y, 6), cell });
     },
-    [isMobile],
+    [drag],
   );
 
   // Zoom keeping the point under (clientX, clientY) fixed — proper map feel.
@@ -373,12 +489,12 @@ export function KolkataMap({
   }, [zoomAtPoint]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (e.pointerType !== "mouse") setTip(null);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     downRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
-    // Two fingers → start pinch, cancel single-finger drag.
-    // Capture the pointer so move events keep flowing to the map even if a
-    // finger slides off the element mid-gesture (mobile pinch reliability).
-    // Single-finger path stays uncaptured so polygon tap/click still works.
+    // Two fingers → start pinch, cancel single-finger drag. Only pinches
+    // capture the pointer (so moves keep flowing mid-gesture); single-finger
+    // drags stay uncaptured so ward polygon taps/clicks still fire.
     if (pointersRef.current.size === 2) {
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -394,10 +510,10 @@ export function KolkataMap({
         startMid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
       };
       setDrag(null);
-      setTip(null);
       return;
     }
-    // Don't capture - let polygon clicks through; just track drag start
+    // Any pointer can start a pan (mouse on PC, touch/pen on mobile);
+    // a tiny movement is still treated as a tap so ward clicks work.
     setDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
   };
   const handlePointerMove = (e: React.PointerEvent) => {
@@ -442,6 +558,13 @@ export function KolkataMap({
     });
   };
   const endPointer = (e: React.PointerEvent) => {
+    if (pointersRef.current.size === 2) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* noop */
+      }
+    }
     pointersRef.current.delete(e.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
     // Double-tap to zoom in (touch), anchored at tap point
@@ -510,7 +633,7 @@ export function KolkataMap({
   return (
     <div
       ref={wrapRef}
-      className="relative h-full w-full overflow-hidden bg-[#eef2f7] dark:bg-[#0f172a] touch-none select-none"
+      className="relative h-full w-full overflow-hidden bg-gradient-to-br from-[#e6edf5] via-[#eef2f7] to-[#dbe4ee] touch-none select-none dark:from-[#0a1120] dark:via-[#0f172a] dark:to-[#131e32]"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={endPointer}
@@ -545,79 +668,37 @@ export function KolkataMap({
 
       <svg
         viewBox={vb}
+        preserveAspectRatio="xMidYMid meet"
         className="absolute inset-0 h-full w-full"
         role="img"
         aria-label="Kolkata ward map"
       >
-        {/* Surrounding  light base for metro context */}
+        {/* Invisible hit layer: clears hover over empty (non-ward) areas */}
         <rect
           x={vbX}
           y={vbY}
           width={vbW}
           height={vbH}
-          fill="#f1f5f9"
-          className="dark:fill-[#1e293b]/40"
+          fill="transparent"
           onMouseEnter={() => {
             onHover(null);
             setTip(null);
           }}
         />
-        {/* Hooghly River hint  west of city */}
-        <rect
-          x={vbX}
-          y={vbY}
-          width={vbW * 0.12}
-          height={vbH}
-          fill="#e0f2fe"
-          opacity={0.6}
-          className="dark:fill-[#0c4a6e]/20"
-        />
-        {/* Surrounding district labels  subtle */}
-        <text
-          x={vbX + vbW * 0.06}
-          y={vbY + vbH * 0.5}
-          textAnchor="middle"
-          fontSize={8 / z}
-          fill="#94a3b8"
-          opacity={0.7}
-          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
-        >
-          Howrah
-        </text>
-        <text
-          x={vbX + vbW * 0.5}
-          y={vbY + 14 / z}
-          textAnchor="middle"
-          fontSize={7 / z}
-          fill="#94a3b8"
-          opacity={0.6}
-          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
-        >
-          North 24 Pgs
-        </text>
-        <text
-          x={vbX + vbW * 0.5}
-          y={vbY + vbH - 8 / z}
-          textAnchor="middle"
-          fontSize={7 / z}
-          fill="#94a3b8"
-          opacity={0.6}
-          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
-        >
-          South 24 Pgs
-        </text>
-        <text
-          x={vbX + vbW - 18 / z}
-          y={vbY + vbH * 0.5}
-          textAnchor="middle"
-          fontSize={7 / z}
-          fill="#94a3b8"
-          opacity={0.6}
-          style={{ fontFamily: "var(--font-sans), Archivo, sans-serif" }}
-          transform={`rotate(90, ${vbX + vbW - 18 / z}, ${vbY + vbH * 0.5})`}
-        >
-          East Kolkata Wetlands
-        </text>
+        {/* Real base map (CARTO light/dark, OSM data) under the wards */}
+        {tiles.map((tl) => (
+          <image
+            key={tl.key}
+            href={tl.url}
+            x={tl.x}
+            y={tl.y}
+            width={tl.w}
+            height={tl.h}
+            opacity={darkTiles ? 0.8 : 0.9}
+            preserveAspectRatio="none"
+          />
+        ))}
+        {/* Base-map tiles carry their own place labels — none drawn here. */}
         {cells.map((c) => (
           <WardPolygon
             key={c.wardId}
@@ -652,25 +733,21 @@ export function KolkataMap({
           if (!showLabels && area < 40) return null;
           const isEmph = c.wardId === selectedId || isMatch(c);
           const showLoc = loc && (isEmph || z > 1.8);
+          // All-white labels; legibility on bright fills comes from the
+          // dark .map-label halo (~3px screen).
+          const ink = "#ffffff";
           return (
             <g key={`lbl-${c.wardId}`} style={{ pointerEvents: "none" }}>
               <text
                 x={sx}
-                y={showLoc ? sy - 3 / z : sy}
+                y={showLoc ? sy - 5 / z : sy}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fontSize={Math.max(5, 9 / Math.pow(z, 0.4))}
-                fontWeight={isEmph ? 800 : 600}
-                fill={
-                  c.wardId === selectedId
-                    ? "white"
-                    : c.step && c.step >= 4
-                      ? "white"
-                      : "#1e293b"
-                }
-                stroke={c.wardId === selectedId ? "rgba(0,0,0,0.35)" : "white"}
-                strokeWidth={0.6 / z}
-                paintOrder="stroke"
+                fontSize={Math.max(5.5, 10 / Math.pow(z, 0.35))}
+                fontWeight={isEmph ? 800 : 700}
+                fill={ink}
+                className="map-label"
+                strokeWidth={3 / z}
                 style={{
                   fontFamily: "var(--font-sans), Archivo, sans-serif",
                   userSelect: "none",
@@ -681,15 +758,15 @@ export function KolkataMap({
               {showLoc && (
                 <text
                   x={sx}
-                  y={sy + 6 / z}
+                  y={sy + 8 / z}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fontSize={Math.max(4, 6.5 / Math.pow(z, 0.35))}
+                  fontSize={Math.max(4.5, 7 / Math.pow(z, 0.35))}
                   fontWeight={600}
-                  fill={c.wardId === selectedId ? "white" : "#334155"}
-                  stroke="white"
-                  strokeWidth={0.4 / z}
-                  paintOrder="stroke"
+                  fill={ink}
+                  opacity={0.82}
+                  className="map-label"
+                  strokeWidth={2.5 / z}
                   style={{
                     fontFamily: "var(--font-sans), Archivo, sans-serif",
                     userSelect: "none",
@@ -723,8 +800,31 @@ export function KolkataMap({
         );
       })()}
 
-      {/* Zoom controls  Google Maps style vertical stack */}
-      <div className="absolute bottom-4 right-3 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform">
+      {/* Soft vignette for depth (non-interactive) */}
+      <div
+        className="pointer-events-none absolute inset-0 shadow-[inset_0_0_110px_rgba(15,23,42,0.14)] dark:shadow-[inset_0_0_130px_rgba(0,0,0,0.5)]"
+        aria-hidden
+      />
+
+      {/* Tile attribution (required by Esri/OSM terms) */}
+      <div
+        className="pointer-events-none absolute left-3 top-3 rounded bg-card/80 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground backdrop-blur"
+        aria-hidden
+      >
+        © Esri · © OpenStreetMap contributors
+      </div>
+
+      {/* North indicator */}
+      <div
+        className="pointer-events-none absolute right-3 top-3 flex h-9 w-9 flex-col items-center justify-center rounded-full border bg-card/90 leading-none shadow-lg backdrop-blur"
+        aria-hidden
+      >
+        <Navigation className="h-3 w-3 fill-primary text-primary" />
+        <span className="text-[8px] font-black tracking-wide">N</span>
+      </div>
+
+      {/* Zoom controls  Google Maps style vertical stack (above hover popup) */}
+      <div className="absolute bottom-4 right-3 z-20 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform">
         <button
           onClick={() => {
             const rect = wrapRef.current?.getBoundingClientRect();

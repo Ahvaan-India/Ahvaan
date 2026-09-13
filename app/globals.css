@@ -105,6 +105,13 @@
   .map-wrap polygon {
     transition: fill 0.15s ease;
   }
+  /* Ward labels: all-white text with a dark halo, so glyphs stay crisp
+     on every fill (bright or dark) in both themes. */
+  .map-label {
+    paint-order: stroke;
+    stroke: rgb(15 23 42 / 0.62);
+    stroke-linejoin: round;
+  }
   .fcard.LOW {
     background: hsl(var(--cat-LOW-bg));
   }
