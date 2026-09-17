@@ -4,16 +4,29 @@ import {
   doublePrecision,
   jsonb,
   timestamp,
+  text,
+  integer,
 } from "drizzle-orm/pg-core";
 
 export const locationsTable = pgTable("locations", {
   id: serial("id").primaryKey(),
 
-  lat: doublePrecision("lat").notNull(),
+  district: text("district").notNull(),
 
-  long: doublePrecision("long").notNull(),
+  ward: integer("ward").notNull(),
+
+  lat: doublePrecision("lat"),
+
+  long: doublePrecision("long"),
 
   geometry: jsonb("geometry"),
 
-  lastRefresh: timestamp("last_refresh").notNull(),
+  status: text("status").notNull().default("active"),
+
+  lastRefresh: timestamp("last_refresh", {
+    withTimezone: true,
+    mode: "date",
+  })
+    .notNull()
+    .defaultNow(),
 });
