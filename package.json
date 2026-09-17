@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "pg": "^8.23.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "pnpm": "^12.4.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.20.2",
+    "@types/pg": "^8.23.1",
+    "drizzle-kit": "0.31.10",
+    "drizzle-orm": "0.45.2"
+  }
+}
