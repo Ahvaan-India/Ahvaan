@@ -1,4 +1,5 @@
 import { calculateHeatIndex } from "./calculate.HI.js";
+import calculateHTSI from "./calculate.HTSI.js";
 import { calculateMRT } from "./calculate.MRT.js";
 import { calculateUTCI } from "./calculate.UTCI.js";
 import { calculateWBGT } from "./calculate.WBGT.js";
@@ -45,9 +46,12 @@ export function calculate(input) {
 
   const WBT = calculateWetBulbTemperature(temperature2m, relativeHumidity2m);
 
+  const HTSI = calculateHTSI(WBGT, HI, UTCI);
+
   return {
-    HI,
+    HTSI,
     WBGT,
+    HI,
     UTCI,
     WBT,
   };
