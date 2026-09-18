@@ -1,8 +1,9 @@
 import cron from "node-cron";
 import { DateTime } from "luxon";
 
-import { initializeDatabase } from "./initialize.js";
+//import { initializeDatabase } from "./initialize.js";
 import { updateForecast } from "./scripts/update.forecast.js";
+import { startInitializing } from "./start.database.js";
 
 const TIMEZONE = "Asia/Kolkata";
 const CRON_SCHEDULE = "5 0 * * *";
@@ -31,7 +32,7 @@ async function start() {
     console.log("Starting database backend...");
 
     // Run initialization once on startup
-    await initializeDatabase();
+    await startInitializing();
 
     console.log("Database initialization completed.");
 
@@ -53,7 +54,7 @@ async function start() {
         );
 
         try {
-          await initializeDatabase();
+          await startInitializing();
 
           console.log("Scheduled database initialization completed.");
 

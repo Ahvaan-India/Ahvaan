@@ -12,8 +12,9 @@ import { storeIngestionError } from "./scripts/data.ingestion.errors.js";
 import { validateDemographics } from "./scripts/validation/validate.demographics.js";
 import { getDateAfterDays, getDateBeforeDays } from "./utils/date.utils.js";
 
-export async function initializeDatabase() {
-  const demographics = parseDemographics("./data/kolkata.xlsx");
+export async function initializeDatabase(filePath) {
+  const demographics = parseDemographics(filePath);
+  //const demographics = parseDemographics("./data/kolkata.xlsx");
 
   const firstWard = Object.values(demographics)[0];
 
@@ -179,5 +180,5 @@ export async function initializeDatabase() {
     await storeDemographics(demographicData, locationId);
   }
 
-  console.log("Database initialization completed.");
+  console.log(`Database initialization completed for district ${district}`);
 }
