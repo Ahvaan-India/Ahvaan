@@ -8,6 +8,7 @@ import { LocationNotFoundError } from "@/lib/db/errors";
 import {
   addDays,
   currentIstHourLabel,
+  getAnalysisMetrics,
   istDateString,
   storedHtsi,
   summarizeDayAnalysis,
@@ -33,8 +34,9 @@ interface RouteParams {
  * Website → Redis → Postgres. 404 unknown location, 422 when the engine has
  * produced no days in the window yet (run npm run analysis:update).
  */
-export async function GET(_req: Request, { params }: RouteParams) {
-  const { locationId: raw } = await params;
+export async function GET(_req: Request, { params }: { params: any }) {
+  const resolvedParams = await Promise.resolve(params);
+  const raw = resolvedParams?.locationId;
   const locationId = Number(raw);
   if (!Number.isInteger(locationId) || locationId <= 0) {
     return NextResponse.json(
@@ -49,19 +51,15 @@ export async function GET(_req: Request, { params }: RouteParams) {
   try {
     const { data: payload, cached } = await withRedisCache(
       redisKeys.showcase(locationId),
-      REDIS_TTL.analysisDay,
+      60,
       async () => {
-        const location = await getLocationById(locationId, undefined, {
-          skipCache: true,
-        });
+        const location = await getLocationById(locationId);
         if (!location) throw new LocationNotFoundError(locationId);
         const population = await getLatestPopulation(locationId);
 
         const from = istDateString();
         const to = addDays(from, 5);
-        const rows = await getAnalysisRange(locationId, from, to, undefined, {
-          skipCache: true,
-        });
+        const rows = await getAnalysisRange(locationId, from, to);
         if (rows.length === 0) return null;
 
         const days = rows.map((r) => {
@@ -71,22 +69,19 @@ export async function GET(_req: Request, { params }: RouteParams) {
             hours: entries.length,
             summary: summarizeDayAnalysis(entries),
             hourly: entries.map((e) => {
-              const input = (e.input ?? {}) as Record<string, unknown>;
-              const num = (v: unknown): number | null =>
-                typeof v === "number" && Number.isFinite(v) ? v : null;
+              const m = getAnalysisMetrics(e);
               return {
                 hour: e.hour,
-                htsi: storedHtsi(e),
-                wbgt: e.analysis.WBGT,
-                hi: e.analysis.HI,
-                utci: e.analysis.UTCI,
-                wbt: e.analysis.WBT,
-                // Observed/model weather: snapshots of the weather row the
-                // engine analysed (lets the UI show temp/RH/wind per hour).
-                temp: num(input.temperature2m),
-                humidity: num(input.relativeHumidity2m),
-                wind: num(input.windSpeed10m),
-                solar: num(input.shortwaveRadiation),
+                htsi: m.htsi,
+                wbgt: m.wbgt,
+                hi: m.hi,
+                utci: m.utci,
+                wbt: m.wbt,
+                temp: m.temp,
+                humidity: m.humidity,
+                wind: m.wind,
+                solar: m.solar,
+                realFeel: m.realFeel,
               };
             }),
           };

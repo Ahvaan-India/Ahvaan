@@ -7,11 +7,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { RISK_COLORS } from "@/components/map/KolkataMap";
 
-export type MapLayer = "risk" | "thermal" | "wbgt" | "hi" | "exposure" | "vulnerability";
+export type MapLayer = "thermal" | "wbgt" | "hi" | "exposure" | "vulnerability";
 
 const LAYERS: Array<{ id: MapLayer; label: string; icon: LucideIcon; desc: string }> = [
-  { id: "risk", label: "Composite Risk", icon: Flame, desc: "Overall 0–1" },
-  { id: "thermal", label: "Thermal Stress", icon: Thermometer, desc: "WBGT+HI" },
+  { id: "thermal", label: "HTSI / Thermal", icon: Thermometer, desc: "Heat index" },
   { id: "wbgt", label: "WBGT", icon: Sun, desc: "°C shade" },
   { id: "hi", label: "Heat Index", icon: Thermometer, desc: "°C feels-like" },
   { id: "exposure", label: "Exposure", icon: Users, desc: "Pop density" },

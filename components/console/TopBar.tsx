@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, Search, X, Menu } from "lucide-react";
+import { Bell, Search, X, Menu, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useNav } from "@/lib/navContext";
 import {
@@ -10,6 +10,7 @@ import {
   getWardLocality,
   matchesWardQuery,
 } from "@/lib/geo/wardNames";
+import { APP_CONFIG } from "@/lib/config/appConfig";
 import { useState, useMemo } from "react";
 
 /**
@@ -30,10 +31,10 @@ export function TopBar({
   wards,
   onSelectWard,
 }: {
-  watchLabel: string;
-  syncedAt: string | null;
-  syncDetail: string | null;
-  timezone: string;
+  watchLabel?: string;
+  syncedAt?: string | null;
+  syncDetail?: string | null;
+  timezone?: string;
   onSendAlert: () => void;
   searchQuery?: string;
   onSearchChange?: (v: string) => void;
@@ -57,7 +58,7 @@ export function TopBar({
       .filter((w) =>
         matchesWardQuery(w.ward, w.wardName, getWardLocality(w.ward), q),
       )
-      .slice(0, 8);
+      .slice(0, APP_CONFIG.search.maxSuggestions);
   }, [wards, searchQuery]);
   const showDropdown = focused && suggestions.length > 0 && isMap;
 
@@ -80,18 +81,18 @@ export function TopBar({
             className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
           >
             <img
-              src="/logo.png"
-              alt="Ahvaan logo"
+              src={APP_CONFIG.logoPath}
+              alt={`${APP_CONFIG.name} logo`}
               width={30}
               height={30}
               className="h-7 w-7 rounded-lg shadow-sm sm:h-8 sm:w-8"
             />
             <span className="hidden flex-col leading-none min-[400px]:flex">
               <span className="text-[13px] font-extrabold tracking-tight sm:text-[14px]">
-                Ahvaan
+                {APP_CONFIG.name}
               </span>
               <span className="text-[9px] font-semibold tracking-widest text-muted-foreground sm:text-[10px]">
-                KOLKATA
+                {APP_CONFIG.subtitle}
               </span>
             </span>
           </Link>
@@ -107,7 +108,7 @@ export function TopBar({
                 onChange={(e) => onSearchChange(e.target.value)}
                 onFocus={() => setFocused(true)}
                 onBlur={() => setTimeout(() => setFocused(false), 180)}
-                placeholder="Search ward…"
+                placeholder={APP_CONFIG.search.placeholder}
                 className="h-9 w-full rounded-full border bg-muted/40 py-2 pl-9 pr-9 text-sm placeholder:text-muted-foreground focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
               />
               {searchQuery ? (
@@ -160,6 +161,16 @@ export function TopBar({
         {/* RIGHT SECTION: pinned right on all screens (ml-auto covers
             mobile, where the centre search is hidden and adds no flex) */}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Button
+            onClick={() => window.dispatchEvent(new CustomEvent("toggle-chatbot"))}
+            variant="outline"
+            size="sm"
+            className="h-9 gap-1.5 rounded-full border border-primary/20 bg-card px-3 text-xs font-bold text-foreground shadow-sm hover:bg-accent sm:px-3.5 sm:text-sm"
+          >
+            <Bot className="h-4 w-4 text-red-600" />
+            <span className="hidden sm:inline">AI Assistant</span>
+            <span className="sm:hidden">AI</span>
+          </Button>
           <Button
             onClick={onSendAlert}
             size="sm"

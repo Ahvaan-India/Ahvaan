@@ -111,26 +111,19 @@ export function AnalyticsView({ summary, wards }: Props) {
   // NOTE: no top-wards bar chart here — the overview page already covers
   // that with its "Most critical wards" card (tap → map).
 
+  const htsiBins = dataBins(
+    valid.map((w) => w.thermal),
+    6,
+  );
+
   const scatter = valid.slice(0, 60).map((w) => ({
     pop: w.population ?? 0,
-    risk: +(w.riskScore * 100).toFixed(1),
+    htsi: w.thermal ? +w.thermal.toFixed(2) : 0,
     label: w.ward ?? w.wardId,
   }));
 
-  const hist = Array.from({ length: 10 }, (_, i) => {
-    const lo = i / 10,
-      hi = (i + 1) / 10;
-    return {
-      bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`,
-      count: valid.filter(
-        (w) => w.riskScore >= lo && w.riskScore < hi + (i === 9 ? 0.001 : 0),
-      ).length,
-    };
-  });
-
-  // Data-driven extents so axes fit the data (not fixed full ranges).
-  const risk100 = valid.map((w) => w.riskScore * 100);
-  const riskDom = domain100(risk100);
+  const htsiVals = valid.map((w) => w.thermal ?? 0);
+  const htsiDom = domainRaw(htsiVals);
   const popMax = ceilNice(Math.max(0, ...valid.map((w) => w.population ?? 0)));
   const expVals = valid.map((w) => (w.exposure ?? 0) * 100);
   const vulnVals = valid.map((w) => (w.vulnerability ?? 0) * 100);
@@ -145,14 +138,37 @@ export function AnalyticsView({ summary, wards }: Props) {
     6,
   );
   const wbgtLine = [...valid]
-    .sort((a, b) => a.riskScore - b.riskScore)
+    .sort((a, b) => (a.thermal ?? 0) - (b.thermal ?? 0))
     .slice(0, 50)
     .map((w) => ({
-      r: +(w.riskScore * 100).toFixed(1),
+      htsi: w.thermal ? +w.thermal.toFixed(2) : 0,
       wbgt: w.wbgt ?? 0,
     }));
-  const wbgtLineX = domain100(wbgtLine.map((d) => d.r));
+  const wbgtLineX = domainRaw(wbgtLine.map((d) => d.htsi));
   const wbgtLineY = domainRaw(wbgtLine.map((d) => d.wbgt));
+
+  const popExposureByTier = [
+    {
+      name: "Low",
+      pop: valid.filter((w) => w.category === "LOW").reduce((s, w) => s + (w.population ?? 0), 0),
+      color: RISK_COLORS[0],
+    },
+    {
+      name: "Moderate",
+      pop: valid.filter((w) => w.category === "MODERATE").reduce((s, w) => s + (w.population ?? 0), 0),
+      color: RISK_COLORS[1],
+    },
+    {
+      name: "High",
+      pop: valid.filter((w) => w.category === "HIGH").reduce((s, w) => s + (w.population ?? 0), 0),
+      color: RISK_COLORS[2],
+    },
+    {
+      name: "Extreme",
+      pop: valid.filter((w) => w.category === "VERY_HIGH").reduce((s, w) => s + (w.population ?? 0), 0),
+      color: RISK_COLORS[4],
+    },
+  ];
 
   const Wrapper: React.ElementType = reduceMotion ? "div" : motion.div;
   const wrapperProps = reduceMotion
@@ -181,7 +197,7 @@ export function AnalyticsView({ summary, wards }: Props) {
       <div>
         <p className="text-sm text-muted-foreground">
           {summary
-            ? `${summary.wards} wards · Load ${summary.metroHeatLoad}/100 · Risk & exposure breakdown`
+            ? `${summary.wards} wards · HTSI Index ${summary.metroHeatLoad} · Category & population exposure analytics`
             : "Loading…"}
         </p>
       </div>
@@ -190,7 +206,7 @@ export function AnalyticsView({ summary, wards }: Props) {
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
             <CardHeader className="pb-2">
-              <CardTitle className="text-base">Risk category share</CardTitle>
+              <CardTitle className="text-base">Heat stress category share</CardTitle>
             </CardHeader>
             <CardContent className="h-[300px] w-full min-w-0 p-2 sm:p-6">
               <ResponsiveContainer width="100%" height="100%">
@@ -228,12 +244,12 @@ export function AnalyticsView({ summary, wards }: Props) {
           <Card className="overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">
-                Risk histogram (0–100)
+                HTSI Index distribution
               </CardTitle>
             </CardHeader>
             <CardContent className="h-[300px] w-full min-w-0 p-2 sm:p-6">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={hist}>
+                <BarChart data={htsiBins}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
                   <XAxis
                     dataKey="bucket"
@@ -241,7 +257,7 @@ export function AnalyticsView({ summary, wards }: Props) {
                     interval="preserveStartEnd"
                     minTickGap={16}
                     height={48}
-                    label={xLabel("Risk score (0–100)")}
+                    label={xLabel("HTSI Index")}
                   />
                   <YAxis
                     tick={AXIS_TICK}
@@ -277,7 +293,7 @@ export function AnalyticsView({ summary, wards }: Props) {
           <Card className="overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">
-                Population vs heat risk
+                Population vs HTSI Index
               </CardTitle>
             </CardHeader>
             <CardContent className="h-[320px] w-full min-w-0 p-2 sm:p-6">
@@ -299,13 +315,13 @@ export function AnalyticsView({ summary, wards }: Props) {
                   />
                   <YAxis
                     type="number"
-                    dataKey="risk"
-                    name="Risk"
-                    domain={riskDom}
+                    dataKey="htsi"
+                    name="HTSI"
+                    domain={htsiDom}
                     tick={AXIS_TICK}
                     tickCount={5}
                     width={48}
-                    label={yLabel("Risk score (0–100)")}
+                    label={yLabel("HTSI Index")}
                   />
                   <Tooltip
                     animationDuration={0}
@@ -314,7 +330,7 @@ export function AnalyticsView({ summary, wards }: Props) {
                       <ChartTooltip
                         fields={[
                           { key: "pop", label: "Population", format: fmtInt },
-                          { key: "risk", label: "Risk score", unit: "/100" },
+                          { key: "htsi", label: "HTSI Index" },
                         ]}
                         title={(_l, d) => `Ward ${d.label ?? ""}`}
                       />
@@ -336,7 +352,7 @@ export function AnalyticsView({ summary, wards }: Props) {
         <Card className="overflow-hidden">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">
-              WBGT vs risk (wards sorted by risk)
+              WBGT vs HTSI Index (wards sorted by HTSI)
             </CardTitle>
           </CardHeader>
           <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-6">
@@ -344,7 +360,7 @@ export function AnalyticsView({ summary, wards }: Props) {
               <LineChart data={wbgtLine}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                 <XAxis
-                  dataKey="r"
+                  dataKey="htsi"
                   type="number"
                   domain={wbgtLineX}
                   tick={AXIS_TICK}
@@ -384,14 +400,14 @@ export function AnalyticsView({ summary, wards }: Props) {
         </Card>
       </Item>
 
-      {/* New: City load trend (7d) + Exposure vs Vulnerability */}
+      {/* City load trend (7d) + Heat Index vs WBGT Correlation */}
       <CityTrend />
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">
-                Exposure vs Vulnerability (wards)
+                Heat Index vs WBGT correlation (°C)
               </CardTitle>
             </CardHeader>
             <CardContent className="h-[320px] w-full min-w-0 p-2 sm:p-4">
@@ -402,33 +418,33 @@ export function AnalyticsView({ summary, wards }: Props) {
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                   <XAxis
                     type="number"
-                    dataKey="exp"
-                    name="Exposure"
-                    domain={expDom}
+                    dataKey="hi"
+                    name="Heat Index"
+                    domain={domainRaw(valid.map((w) => (w as any).heatIndex ?? 0))}
                     tick={AXIS_TICK}
                     tickCount={6}
                     height={48}
-                    label={xLabel("Exposure (0–100)")}
+                    label={xLabel("Heat Index (°C)")}
                   />
                   <YAxis
                     type="number"
-                    dataKey="vuln"
-                    name="Vulnerability"
-                    domain={vulnDom}
+                    dataKey="wbgt"
+                    name="WBGT"
+                    domain={domainRaw(valid.map((w) => w.wbgt ?? 0))}
                     tick={AXIS_TICK}
                     tickCount={5}
                     width={52}
-                    label={yLabel("Vulnerability (0–100)")}
+                    label={yLabel("WBGT (°C)")}
                   />
                   <Tooltip
                     animationDuration={0}
                     cursor={{ strokeDasharray: "3 3" }}
                     content={
                       <ChartTooltip
-                        title={null}
+                        title={(_l, d) => `Ward ${d.label ?? ""}`}
                         fields={[
-                          { key: "exp", label: "Exposure", unit: "/100" },
-                          { key: "vuln", label: "Vulnerability", unit: "/100" },
+                          { key: "hi", label: "Heat Index", unit: " °C" },
+                          { key: "wbgt", label: "WBGT", unit: " °C" },
                         ]}
                       />
                     }
@@ -437,14 +453,9 @@ export function AnalyticsView({ summary, wards }: Props) {
                     data={valid
                       .slice(0, 80)
                       .map((w) => ({
-                        exp:
-                          w.exposure != null
-                            ? +(w.exposure * 100).toFixed(1)
-                            : 0,
-                        vuln:
-                          w.vulnerability != null
-                            ? +(w.vulnerability * 100).toFixed(1)
-                            : 0,
+                        label: w.ward ?? w.wardId,
+                        hi: (w as any).heatIndex ?? 0,
+                        wbgt: w.wbgt ?? 0,
                       }))}
                     fill="#0ea5e9"
                     isAnimationActive={chartAnim}
@@ -458,25 +469,12 @@ export function AnalyticsView({ summary, wards }: Props) {
           <Card className="overflow-hidden">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">
-                Ward thermal distribution
+                HTSI Index distribution
               </CardTitle>
             </CardHeader>
             <CardContent className="h-[320px] w-full min-w-0 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={Array.from({ length: 10 }, (_, i) => {
-                    const lo = i / 10,
-                      hi = (i + 1) / 10;
-                    return {
-                      bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`,
-                      count: valid.filter(
-                        (w) =>
-                          (w.thermal ?? 0) >= lo &&
-                          (w.thermal ?? 0) < hi + (i === 9 ? 0.001 : 0),
-                      ).length,
-                    };
-                  })}
-                >
+                <BarChart data={htsiBins}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                   <XAxis
                     dataKey="bucket"
@@ -484,7 +482,7 @@ export function AnalyticsView({ summary, wards }: Props) {
                     interval="preserveStartEnd"
                     minTickGap={16}
                     height={48}
-                    label={xLabel("Thermal stress (0–100)")}
+                    label={xLabel("HTSI Index")}
                   />
                   <YAxis
                     tick={AXIS_TICK}
@@ -515,7 +513,7 @@ export function AnalyticsView({ summary, wards }: Props) {
         </Item>
       </div>
 
-      {/* All parameters - heat index, WBGT, etc. */}
+      {/* All parameters - heat index, WBGT, UTCI */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
@@ -593,13 +591,10 @@ export function AnalyticsView({ summary, wards }: Props) {
         </Item>
         <Item {...itemProps} className="min-w-0">
           <Card className="overflow-hidden">
-            <CardHeader className="pb-2"><CardTitle className="text-sm">Vulnerability distribution</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-sm">UTCI (°C) distribution</CardTitle></CardHeader>
             <CardContent className="h-[240px] w-full min-w-0 p-2 sm:p-4">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={Array.from({ length: 10 }, (_, i) => {
-                  const lo = i / 10, hi = (i + 1) / 10;
-                  return { bucket: `${(lo * 100).toFixed(0)}–${(hi * 100).toFixed(0)}`, count: valid.filter((w) => (w.vulnerability ?? 0) >= lo && (w.vulnerability ?? 0) < hi + (i === 9 ? 0.001 : 0)).length };
-                })}>
+                <BarChart data={dataBins((wards as any[]).map((w: any) => w.utci), 6)}>
                   <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
                   <XAxis
                     dataKey="bucket"
@@ -607,7 +602,7 @@ export function AnalyticsView({ summary, wards }: Props) {
                     interval="preserveStartEnd"
                     minTickGap={12}
                     height={48}
-                    label={xLabel("Vulnerability (0–100)")}
+                    label={xLabel("UTCI (°C)")}
                   />
                   <YAxis
                     tick={AXIS_TICK}
@@ -633,33 +628,29 @@ export function AnalyticsView({ summary, wards }: Props) {
         </Item>
       </div>
 
-      {/* All parameters table */}
+      {/* Ward parameters table */}
       <Card className="overflow-hidden">
-        <CardHeader className="pb-2"><CardTitle className="text-base">All parameters - ward table (141 wards)</CardTitle></CardHeader>
+        <CardHeader className="pb-2"><CardTitle className="text-base">Microclimate & Heat Metrics - Ward Table (141 wards)</CardTitle></CardHeader>
         <CardContent className="max-h-[380px] overflow-auto p-0">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-card">
               <tr className="border-b text-left">
                 <th className="p-2">Ward</th>
-                <th className="p-2">Risk</th>
-                <th className="p-2">WBGT</th>
-                <th className="p-2">HI</th>
-                <th className="p-2">Thermal</th>
-                <th className="p-2">Exposure</th>
-                <th className="p-2">Vuln</th>
-                <th className="p-2">Pop</th>
+                <th className="p-2">HTSI</th>
+                <th className="p-2">WBGT (°C)</th>
+                <th className="p-2">Heat Index (°C)</th>
+                <th className="p-2">UTCI (°C)</th>
+                <th className="p-2">Population</th>
               </tr>
             </thead>
             <tbody>
               {valid.slice(0, 50).map((w) => (
                 <tr key={w.wardId} className="border-b hover:bg-muted/40">
                   <td className="p-2 font-medium">W{w.ward}</td>
-                  <td className="p-2 tabular-nums">{(w.riskScore * 100).toFixed(1)}</td>
+                  <td className="p-2 tabular-nums">{w.thermal ? w.thermal.toFixed(2) : "-"}</td>
                   <td className="p-2 tabular-nums">{w.wbgt?.toFixed(1) ?? "-"}</td>
                   <td className="p-2 tabular-nums">{(w as any).heatIndex?.toFixed(1) ?? "-"}</td>
-                  <td className="p-2 tabular-nums">{(w.thermal! * 100).toFixed(0)}</td>
-                  <td className="p-2 tabular-nums">{(w.exposure! * 100).toFixed(0)}</td>
-                  <td className="p-2 tabular-nums">{(w.vulnerability! * 100).toFixed(0)}</td>
+                  <td className="p-2 tabular-nums">{(w as any).utci?.toFixed(1) ?? "-"}</td>
                   <td className="p-2 tabular-nums">{w.population?.toLocaleString("en-IN") ?? "-"}</td>
                 </tr>
               ))}
@@ -680,14 +671,14 @@ function CityTrend() {
   if (days.length < 2) return null;
   const pts = days.map((d) => ({
     d: d.date.slice(5),
-    risk: +(d.avgRisk * 100).toFixed(1),
+    htsi: +(d.avgRisk > 10 ? d.avgRisk : d.avgRisk * 10).toFixed(2),
   }));
   return (
     <div className="min-w-0">
       <Card className="overflow-hidden">
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
-            City mean risk last 7 days
+            City mean HTSI last 7 days
           </CardTitle>
         </CardHeader>
         <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-6">
@@ -703,20 +694,20 @@ function CityTrend() {
                 label={xLabel("Date")}
               />
               <YAxis
-                domain={domainRaw(pts.map((p) => p.risk))}
+                domain={domainRaw(pts.map((p) => p.htsi))}
                 tick={AXIS_TICK}
                 tickCount={5}
                 width={48}
-                label={yLabel("Mean risk (0–100)")}
+                label={yLabel("Mean HTSI")}
               />
               <Tooltip
                 animationDuration={0}
-                content={<ChartTooltip unit="/100" />}
+                content={<ChartTooltip />}
               />
               <Line
                 type="monotone"
-                dataKey="risk"
-                name="Mean risk"
+                dataKey="htsi"
+                name="Mean HTSI"
                 dot
                 stroke="#f97316"
                 strokeWidth={2}

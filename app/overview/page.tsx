@@ -31,12 +31,13 @@ export default function OverviewPage() {
   const alertsList = useMemo(
     () =>
       wards
-        .filter((w: any) => w.riskScore != null)
+        .filter((w: any) => w.thermal != null || w.riskScore != null)
         .map((w: any) => ({
           wardId: w.wardId,
           ward: w.ward,
           wardName: w.wardName,
           riskScore: w.riskScore,
+          thermal: w.thermal,
           evaluation: evaluateWardAlert(
             {
               riskScore: w.riskScore,
@@ -48,11 +49,15 @@ export default function OverviewPage() {
           ),
         }))
         .filter((a: any) => a.evaluation.level === "HIGH" || a.evaluation.level === "EXTREME")
-        .sort((a: any, b: any) => b.riskScore - a.riskScore),
+        .sort((a: any, b: any) => (b.thermal ?? b.riskScore) - (a.thermal ?? a.riskScore)),
     [wards],
   );
 
-  const validWards = wards.filter((w: any) => w.riskScore != null);
+  const validWards = wards.filter((w: any) => w.thermal != null || w.riskScore != null);
+  const sortedByStress = [...validWards].sort((a: any, b: any) => (b.thermal ?? (b.riskScore * 100)) - (a.thermal ?? (a.riskScore * 100)));
+  const topCritical = sortedByStress.slice(0, 5);
+  const maxCritical = topCritical.length ? (topCritical[0].thermal ?? (topCritical[0].riskScore * 100)) : 100;
+
   const catCount = (c: string) => validWards.filter((w: any) => w.category === c).length;
   const split = [
     { key: "LOW", label: "Low", n: catCount("LOW") },
@@ -64,10 +69,10 @@ export default function OverviewPage() {
   const exposedPop = validWards
     .filter((w: any) => w.category === "HIGH" || w.category === "VERY_HIGH")
     .reduce((s: number, w: any) => s + (w.population ?? 0), 0);
-  const topCritical = [...validWards]
-    .sort((a: any, b: any) => b.riskScore - a.riskScore)
-    .slice(0, 5);
-  const maxCritical = Math.max(0, ...topCritical.map((w: any) => w.riskScore * 100));
+  const totalCityPop = useMemo(
+    () => validWards.reduce((s: number, w: any) => s + (w.population ?? 0), 0),
+    [validWards],
+  );
 
   return (
     <div className="flex h-[100dvh] flex-col bg-background">
@@ -90,7 +95,7 @@ export default function OverviewPage() {
             <PageHeader
               icon={Flame}
               iconClassName="text-orange-500"
-              title="Overview - Heat Risk Intelligence"
+              title="Overview - Heat Stress Intelligence"
               subtitle={`City-wide snapshot · ${summary?.wards ?? "—"} wards · updated ${summary?.refreshedAt ? new Date(summary.refreshedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }) : "—"}`}
             />
 
@@ -126,7 +131,7 @@ export default function OverviewPage() {
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">High Risk</p>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">High Stress</p>
                           <p className="text-3xl font-black tabular-nums">{summary.high}</p>
                           <p className="text-xs text-muted-foreground">{summary.deltas?.high ?? "-"} vs {summary.deltaBasis ?? "-"}</p>
                         </div>
@@ -138,8 +143,8 @@ export default function OverviewPage() {
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Heat Load</p>
-                          <p className="text-3xl font-black tabular-nums">{summary.metroHeatLoad}<span className="text-lg font-semibold text-muted-foreground">/100</span></p>
+                          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">HTSI Heat Load</p>
+                          <p className="text-3xl font-black tabular-nums">{summary.metroHeatLoad}</p>
                           <p className="text-xs text-muted-foreground">{summary.watch.name}</p>
                         </div>
                         <Sun className="h-8 w-8 text-teal-500/20" />
@@ -154,77 +159,108 @@ export default function OverviewPage() {
 
             {/* Category split + most critical wards */}
             {wards.length ? (
-              <div className="grid gap-3 lg:grid-cols-2">
+              <>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-base"><Layers className="h-4 w-4" /> Category split</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex h-4 overflow-hidden rounded-full bg-muted" role="img" aria-label="Ward count by category">
+                        {split.map((c) =>
+                          c.n > 0 ? (
+                            <div
+                              key={c.key}
+                              title={`${c.label}: ${c.n} wards`}
+                              style={{ width: `${(c.n / splitTotal) * 100}%`, background: riskFillForCategory(c.key) }}
+                            />
+                          ) : null,
+                        )}
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {split.map((c) => (
+                          <div key={c.key} className="rounded-lg border p-2">
+                            <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                              <span className="h-2 w-2 rounded-full" style={{ background: riskFillForCategory(c.key) }} />
+                              {c.label}
+                            </p>
+                            <p className="mt-0.5 text-xl font-black tabular-nums">{c.n}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-3 text-xs text-muted-foreground">
+                        ≈ <span className="font-bold text-foreground tabular-nums">{exposedPop.toLocaleString("en-IN")}</span> people live in High/Extreme wards.
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-2 text-base"><AlertTriangle className="h-4 w-4" /> Most critical wards (HTSI)</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {topCritical.map((w: any, i: number) => {
+                          const val = w.thermal ? w.thermal.toFixed(2) : (w.riskScore * 100).toFixed(0);
+                          return (
+                            <button
+                              key={w.wardId}
+                              onClick={() => {
+                                setSelectedId(w.wardId);
+                                router.push("/maps");
+                              }}
+                              className="flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-colors hover:bg-muted/40"
+                              title="Open on map"
+                            >
+                              <span className="w-6 shrink-0 text-sm font-black tabular-nums text-muted-foreground">#{i + 1}</span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-semibold">
+                                  Ward {w.ward ?? w.wardId}{getWardLocality(w.ward) ? ` · ${getWardLocality(w.ward)}` : ""}
+                                </span>
+                                <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-muted">
+                                  <span
+                                    className="block h-full rounded-full"
+                                    style={{ width: `${maxCritical ? (((w.thermal ?? (w.riskScore * 100))) / maxCritical) * 100 : 0}%`, background: riskFillForCategory(w.category) }}
+                                  />
+                                </span>
+                              </span>
+                              <span className="shrink-0 text-sm font-black tabular-nums">{val}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Population Heat Exposure Summary Card */}
                 <Card>
                   <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center gap-2 text-base"><Layers className="h-4 w-4" /> Risk category split</CardTitle>
+                    <CardTitle className="flex items-center gap-2 text-base">
+                      <Users className="h-4 w-4 text-blue-500" /> City Population Heat Exposure Breakdown
+                    </CardTitle>
                   </CardHeader>
-                  <CardContent>
-                    <div className="flex h-4 overflow-hidden rounded-full bg-muted" role="img" aria-label="Ward count by risk category">
-                      {split.map((c) =>
-                        c.n > 0 ? (
-                          <div
-                            key={c.key}
-                            title={`${c.label}: ${c.n} wards`}
-                            style={{ width: `${(c.n / splitTotal) * 100}%`, background: riskFillForCategory(c.key) }}
-                          />
-                        ) : null,
-                      )}
-                    </div>
-                    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                      {split.map((c) => (
-                        <div key={c.key} className="rounded-lg border p-2">
-                          <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-                            <span className="h-2 w-2 rounded-full" style={{ background: riskFillForCategory(c.key) }} />
-                            {c.label}
-                          </p>
-                          <p className="mt-0.5 text-xl font-black tabular-nums">{c.n}</p>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      ≈ <span className="font-bold text-foreground tabular-nums">{exposedPop.toLocaleString("en-IN")}</span> people live in High/Extreme wards.
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="flex items-center gap-2 text-base"><AlertTriangle className="h-4 w-4" /> Most critical wards</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {topCritical.map((w: any, i: number) => {
-                        const pct = (w.riskScore * 100).toFixed(0);
+                  <CardContent className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                      {split.map((c) => {
+                        const popTier = validWards
+                          .filter((w: any) => w.category === c.key)
+                          .reduce((s: number, w: any) => s + (w.population ?? 0), 0);
+                        const pctOfTotal = (totalCityPop > 0 ? (popTier / totalCityPop) * 100 : 0).toFixed(1);
                         return (
-                          <button
-                            key={w.wardId}
-                            onClick={() => {
-                              setSelectedId(w.wardId);
-                              router.push("/maps");
-                            }}
-                            className="flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition-colors hover:bg-muted/40"
-                            title="Open on map"
-                          >
-                            <span className="w-6 shrink-0 text-sm font-black tabular-nums text-muted-foreground">#{i + 1}</span>
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-semibold">
-                                Ward {w.ward ?? w.wardId}{getWardLocality(w.ward) ? ` · ${getWardLocality(w.ward)}` : ""}
-                              </span>
-                              <span className="mt-1 block h-1.5 overflow-hidden rounded-full bg-muted">
-                                <span
-                                  className="block h-full rounded-full"
-                                  style={{ width: `${maxCritical ? ((w.riskScore * 100) / maxCritical) * 100 : 0}%`, background: riskFillForCategory(w.category) }}
-                                />
-                              </span>
-                            </span>
-                            <span className="shrink-0 text-sm font-black tabular-nums">{pct}<span className="text-xs font-semibold text-muted-foreground">/100</span></span>
-                          </button>
+                          <div key={`pop-${c.key}`} className="rounded-xl border p-3 bg-muted/20">
+                            <p className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ background: riskFillForCategory(c.key) }} />
+                              {c.label} Tier
+                            </p>
+                            <p className="mt-1 text-xl font-black tabular-nums">{popTier.toLocaleString("en-IN")}</p>
+                            <p className="text-[11px] font-semibold text-muted-foreground">{pctOfTotal}% of city population</p>
+                          </div>
                         );
                       })}
                     </div>
                   </CardContent>
                 </Card>
-              </div>
+              </>
             ) : (
               <div className="grid gap-3 lg:grid-cols-2">
                 <Skeleton className="h-48 w-full" />
@@ -235,7 +271,7 @@ export default function OverviewPage() {
             {/* City analytics */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2"><HeartPulse className="h-4 w-4" /> City Heat Load Trend</CardTitle>
+                <CardTitle className="flex items-center gap-2"><HeartPulse className="h-4 w-4" /> City Heat Stress Analytics</CardTitle>
               </CardHeader>
               <CardContent>
                 {wards.length ? <AnalyticsView summary={summary} wards={wards} /> : <Skeleton className="h-[400px] w-full" />}
@@ -257,7 +293,7 @@ export default function OverviewPage() {
                           <p className="text-sm font-semibold">Ward {a.ward} · {a.wardName ?? ""}</p>
                           <p className="truncate text-xs text-muted-foreground">{a.evaluation.triggers.join(" · ") || a.evaluation.advisory}</p>
                         </div>
-                        <span className="text-xs font-bold tabular-nums">{(a.riskScore * 100).toFixed(0)}/100</span>
+                        <span className="text-xs font-bold tabular-nums">HTSI {(a.thermal ?? (a.riskScore * 100)).toFixed(2)}</span>
                       </div>
                     ))}
                   </div>

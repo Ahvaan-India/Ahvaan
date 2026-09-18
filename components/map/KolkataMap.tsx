@@ -1,7 +1,19 @@
 "use client";
 
 import { useMemo, useRef, useState, memo, useCallback, useEffect } from "react";
-import { ZoomIn, ZoomOut, LocateFixed, Maximize2, Navigation } from "lucide-react";
+import { Layers, ZoomIn, ZoomOut, LocateFixed, Maximize2, Navigation } from "lucide-react";
+import type { MapLayer } from "@/components/console/ControlsPopup";
+
+export interface KolkataMapProps {
+  cells: MapWard[];
+  selectedId: number | null;
+  hoveredId: number | null;
+  onSelect: (id: number) => void;
+  onHover: (id: number | null) => void;
+  searchQuery?: string;
+  layer?: MapLayer;
+  onOpenControls?: () => void;
+}
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { RiskBadge } from "@/components/console/RiskBadge";
 import {
@@ -130,8 +142,6 @@ function centroid(cell: MapWard): [number, number] | null {
 
 function layerValue(c: MapWard, layer: string): number | null {
   switch (layer) {
-    case "risk":
-      return null; // use category, not value
     case "thermal":
       return c.thermal;
     case "wbgt":
@@ -143,33 +153,19 @@ function layerValue(c: MapWard, layer: string): number | null {
     case "vulnerability":
       return c.vulnerability;
     default:
-      return null;
+      return c.thermal;
   }
 }
 
 /** Ward → painted 1–5 color step for the active layer. Exported so summary UI (maps pill) buckets wards exactly as painted. */
 export function layerStepFor(c: MapWard, layer: string): number | null {
-  // Risk uses fixed categories (LOW/MODERATE/HIGH/VERY_HIGH)  stable, not decimal-sensitive
-  if (layer === "risk") {
-    switch (c.category) {
-      case "VERY_HIGH":
-        return 5;
-      case "HIGH":
-        return 4;
-      case "MODERATE":
-        return 3;
-      case "LOW":
-        return 1;
-      default:
-        return c.step ?? 2;
-    }
-  }
   const v = layerValue(c, layer);
-  if (v === null || !Number.isFinite(v)) return c.step;
+  if (v === null || !Number.isFinite(v)) return c.step ?? 1;
   let n: number;
   if (layer === "wbgt") n = (v - 15) / 25;
   else if (layer === "hi") n = (v - 20) / 35;
-  else n = v; // thermal/exposure/vuln already 0–1
+  else if (layer === "thermal") n = v > 10 ? v / 100 : v / 10;
+  else n = v; // exposure/vuln already 0–1
   const clamped = Math.max(0, Math.min(1, n));
   if (clamped >= 0.8) return 5;
   if (clamped >= 0.6) return 4;
@@ -259,16 +255,9 @@ export function KolkataMap({
   onSelect,
   onHover,
   searchQuery,
-  layer = "risk",
-}: {
-  cells: MapWard[];
-  selectedId: number | null;
-  hoveredId: number | null;
-  onSelect: (id: number) => void;
-  onHover: (id: number | null) => void;
-  searchQuery?: string;
-  layer?: import("@/components/console/LeftSidebar").MapLayer;
-}) {
+  layer = "thermal",
+  onOpenControls,
+}: KolkataMapProps) {
   const bounds = useMemo(() => boundsOf(cells), [cells]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
@@ -848,7 +837,7 @@ export function KolkataMap({
         <span className="text-[8px] font-black tracking-wide">N</span>
       </div>
 
-      {/* Zoom controls  Google Maps style vertical stack (above hover popup) */}
+      {/* Zoom & Layer controls — Google Maps style vertical stack */}
       <div
         data-map-control
         onMouseEnter={() => {
@@ -857,6 +846,19 @@ export function KolkataMap({
         }}
         className="absolute bottom-4 right-3 z-20 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform"
       >
+        {onOpenControls && (
+          <>
+            <button
+              onClick={onOpenControls}
+              className="flex h-9 w-9 items-center justify-center hover:bg-muted text-primary"
+              aria-label="Map layers & controls"
+              title="Map layers & controls"
+            >
+              <Layers className="h-4 w-4" />
+            </button>
+            <div className="h-px bg-border" />
+          </>
+        )}
         <button
           onClick={() => {
             const rect = wrapRef.current?.getBoundingClientRect();
@@ -918,17 +920,15 @@ export function KolkataMap({
       {/* Legend  fixed categories, not decimal-sensitive */}
       <div data-map-control className="absolute bottom-4 left-3 flex items-center gap-1.5 rounded-full border bg-card/90 px-3 py-1.5 shadow-lg backdrop-blur">
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          {layer === "risk"
-            ? "Risk"
-            : layer === "thermal"
-              ? "Thermal"
-              : layer === "wbgt"
-                ? "WBGT"
-                : layer === "hi"
-                  ? "H-Index"
-                  : layer === "exposure"
-                    ? "Exposure"
-                    : "Vuln"}
+          {layer === "thermal"
+            ? "HTSI"
+            : layer === "wbgt"
+              ? "WBGT"
+              : layer === "hi"
+                ? "H-Index"
+                : layer === "exposure"
+                  ? "Exposure"
+                  : "Vuln"}
         </span>
         {RISK_COLORS.map((c) => (
           <span
@@ -975,19 +975,14 @@ export function KolkataMap({
             })()}
             <div className="mt-2 flex items-center gap-2">
               <span className="text-xl font-black tabular-nums leading-none">
-                {tip.cell.riskScore !== null
-                  ? tip.cell.riskScore.toFixed(3)
-                  : ""}
+                {tip.cell.thermal !== null
+                  ? `${tip.cell.thermal.toFixed(2)}`
+                  : "-"}
               </span>
               {tip.cell.category && <RiskBadge category={tip.cell.category} />}
             </div>
-            <p className="mt-1.5 text-[11px] tabular-nums text-muted-foreground">
-              WBGT{" "}
-              {tip.cell.wbgt !== null ? `${tip.cell.wbgt.toFixed(1)}°C` : ""} ·
-              Pop{" "}
-              {tip.cell.population !== null
-                ? tip.cell.population.toLocaleString("en-IN")
-                : ""}
+            <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              HTSI Index
             </p>
             <p className="mt-0.5 text-[10px] font-medium text-primary">
               Click for full telemetry →

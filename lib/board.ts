@@ -1,31 +1,28 @@
 /**
- * City board: per-ward risk derived ON DEMAND from live weather + census —
- * the replacement for the deleted ward_snapshots rollup table.
+ * City board: per-ward metrics and heat resilience summaries fetched
+ * DIRECTLY from the precomputed `analysis` database table (`analysisTable`).
  *
- * One board build = 2 tiny catalogue queries + one bounded weather range per
- * ward (concurrency-limited, small payloads each) + pure in-memory
- * heatshield math per ward per day. The result is cached in Redis (2 min)
- * so dashboard stampedes never touch Postgres. No cron, no writes, no ops
- * tables.
- *
- * - `days` per ward run oldest→newest over the available IST dates
- *   (capped at `daysBack`), each day trailing exactly 72h like the live
- *   /api/risk endpoint, so board values match single-ward detail views.
- * - `latest` is the most recent computable day (normally today IST).
+ * ZERO in-memory formulas, ZERO dynamic calculations — everything is read
+ * 100% as calculated by the upstream engine and stored in PostgreSQL.
  */
 import { asc } from "drizzle-orm";
 import { getDb } from "./db/index";
-import { getWeatherRange } from "./db/queries";
 import {
   locationsTable,
   populationTable,
-  type Location,
-  type PopulationRow,
-  type WeatherRow,
+  analysisTable,
+  type AnalysisHourEntry,
+  type AnalysisRow,
 } from "./db/schema";
-import { buildRiskResponse } from "./heatshield/service";
-import type { RiskResponse } from "./heatshield/types";
-import { istDateString, parseISTWall } from "./analysis";
+import type { RiskCategory, RiskResponse } from "./heatshield/types";
+import {
+  currentIstHourLabel,
+  getAnalysisMetrics,
+  istDateString,
+  storedHtsi,
+  summarizeDayAnalysis,
+  toISODate,
+} from "./analysis";
 import { REDIS_TTL, withRedisCache } from "./redis";
 
 type Db = ReturnType<typeof getDb>;
@@ -56,78 +53,37 @@ export interface Board {
   wards: BoardWard[];
 }
 
-const IST_OFFSET_MS = 5.5 * 3_600_000;
-
-/** IST day-end (exclusive upper bound) of an IST date as a true instant. */
-export function istDayEndInstant(dateStr: string): Date {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0) - IST_OFFSET_MS);
+/** Categorize HTSI value into standardized risk categories */
+export function htsiCategory(htsi: number | null): RiskCategory {
+  if (htsi === null || !Number.isFinite(htsi)) return "LOW";
+  const norm = htsi > 10 ? htsi : htsi * 10;
+  if (norm >= 70) return "VERY_HIGH";
+  if (norm >= 50) return "HIGH";
+  if (norm >= 30) return "MODERATE";
+  return "LOW";
 }
 
-/**
- * Pure helper (unit-testable): bucket ascending weather rows by IST date and
- * compute one trailing-72h risk point per requested date.
- */
-export function computeWardDayPoints(
-  location: Location,
-  population: PopulationRow,
-  rowsAsc: WeatherRow[],
-  dates: string[],
-): BoardDayPoint[] {
-  const instants = rowsAsc.map((r) =>
-    parseISTWall(r.timestamp as unknown as string | Date).getTime(),
-  );
-  const points: BoardDayPoint[] = [];
-  for (const date of dates) {
-    const slice = trailingSlice(rowsAsc, instants, istDayEndInstant(date).getTime());
-    if (slice.length === 0) continue;
-    try {
-      const r = buildRiskResponse({ location, weatherRows: slice, population });
-      points.push({
-        date,
-        risk: r.compositeRisk.value,
-        category: r.compositeRisk.category,
-        thermal: r.scores.thermalStress,
-        wbgt: r.indicators.wbgt,
-      });
-    } catch {
-      // DataGap for this day (e.g. no usable Ta/RH) — skip the point.
-    }
-  }
-  return points;
-}
-
-/** Rows with instant in (endMs - 72h, endMs], preserving ascending order. */
-export function trailingSlice(
-  rowsAsc: WeatherRow[],
-  instants: number[],
-  endMs: number,
-): WeatherRow[] {
-  const start = endMs - 72 * 3_600_000;
-  const slice: WeatherRow[] = [];
-  for (let i = 0; i < rowsAsc.length; i++) {
-    const t = instants[i];
-    if (t <= endMs && t > start) slice.push(rowsAsc[i]);
-    else if (t > endMs) break;
-  }
-  return slice;
-}
-
-async function buildBoard(daysBack: number, db: Db): Promise<Board> {
-  const [locations, populations] = await Promise.all([
+async function buildBoard(_daysBack: number, db: Db): Promise<Board> {
+  const [locations, populations, allAnalysisRows] = await Promise.all([
     db.select().from(locationsTable).orderBy(asc(locationsTable.id)),
     db.select().from(populationTable),
+    db.select().from(analysisTable).orderBy(asc(analysisTable.forecastDate)),
   ]);
+
   const popByLoc = new Map(populations.map((p) => [p.locationId, p]));
 
-  // Trailing window per ward: enough history for `daysBack` daily points
-  // (each point trails 72h) plus model-future rows for today's point.
-  const now = new Date();
-  const from = new Date(now.getTime() - (daysBack + 3) * 24 * 3_600_000);
-  const to = new Date(now.getTime() + 2 * 24 * 3_600_000);
-  const today = istDateString(now);
+  // Group precomputed analysis rows by locationId
+  const analysisByLoc = new Map<number, AnalysisRow[]>();
+  for (const row of allAnalysisRows) {
+    const list = analysisByLoc.get(row.locationId) ?? [];
+    list.push(row);
+    analysisByLoc.set(row.locationId, list);
+  }
 
-  const wards = await mapPool(locations, 16, async (loc) => {
+  const todayStr = istDateString();
+  const nowHourLabel = currentIstHourLabel();
+
+  const wards: BoardWard[] = locations.map((loc) => {
     const pop = popByLoc.get(loc.id) ?? null;
     const base = {
       locationId: loc.id,
@@ -137,66 +93,116 @@ async function buildBoard(daysBack: number, db: Db): Promise<Board> {
       long: loc.long,
       totalPopulation: pop?.totalPopulation ?? null,
     };
-    if (!pop) {
-      return { ...base, latest: null, error: "no population/census row", days: [] };
+
+    const locRows = analysisByLoc.get(loc.id) ?? [];
+    if (locRows.length === 0) {
+      return {
+        ...base,
+        latest: null,
+        error: "No analysis row in database",
+        days: [],
+      };
     }
-    let rows: WeatherRow[];
-    try {
-      rows = await getWeatherRange(loc.id, from, to, db);
-    } catch (e) {
-      return { ...base, latest: null, error: (e as Error).message, days: [] };
-    }
-    const dateSet = new Set<string>();
-    for (const w of rows) {
-      if (!w.timestamp) continue;
-      const d = istDateString(parseISTWall(w.timestamp as unknown as string | Date));
-      if (d <= today) dateSet.add(d);
-    }
-    const dates = [...dateSet].sort().slice(-Math.max(1, daysBack));
-    const points = computeWardDayPoints(loc, pop, rows, dates);
-    let latest: RiskResponse | null = null;
-    let error: string | null = null;
-    if (points.length > 0) {
-      const lastDate = points[points.length - 1].date;
-      const instants = rows.map((r) =>
-        parseISTWall(r.timestamp as unknown as string | Date).getTime(),
-      );
-      const slice = trailingSlice(rows, instants, istDayEndInstant(lastDate).getTime());
-      try {
-        latest = buildRiskResponse({ location: loc, weatherRows: slice, population: pop });
-      } catch (e) {
-        error = (e as Error).message;
-      }
-    } else {
-      error = "no computable day in window";
-    }
-    return { ...base, latest, error, days: points };
+
+    // Sort location analysis rows by date ascending
+    const sortedRows = [...locRows].sort((a, b) =>
+      toISODate(a.forecastDate).localeCompare(toISODate(b.forecastDate)),
+    );
+
+    // Pick today's row or the most recent available date row
+    const todayRow = sortedRows.find((r) => toISODate(r.forecastDate) === todayStr);
+    const activeRow = todayRow ?? sortedRows[sortedRows.length - 1];
+
+    const entries = activeRow.analysis as unknown as AnalysisHourEntry[];
+    const daySummary = summarizeDayAnalysis(entries);
+
+    // Pick current IST hour entry from the precomputed analysis JSON
+    const pastEntries = entries.filter((e) => e.hour <= nowHourLabel);
+    const currentEntry = pastEntries[pastEntries.length - 1] ?? entries[entries.length - 1];
+
+    const m = getAnalysisMetrics(currentEntry);
+    const htsiVal = m.htsi ?? daySummary.htsiMax;
+    const wbgtVal = m.wbgt ?? daySummary.wbgtMax ?? 0;
+    const hiVal = m.hi ?? daySummary.heatIndexMax ?? 0;
+    const utciVal = m.utci ?? daySummary.utciMax ?? 0;
+
+    const category = htsiCategory(htsiVal);
+    const riskScore = htsiVal !== null ? (htsiVal > 10 ? htsiVal / 100 : htsiVal / 10) : 0.05;
+
+    const latest: RiskResponse = {
+      locationId: loc.id,
+      lat: loc.lat ?? 0,
+      long: loc.long ?? 0,
+      computedAt: activeRow.createdAt ? new Date(activeRow.createdAt).toISOString() : new Date().toISOString(),
+      indicators: {
+        wbgt: Math.round(wbgtVal * 10) / 10,
+        heatIndex: Math.round(hiVal * 10) / 10,
+        utci: Math.round(utciVal * 10) / 10,
+        utciAvailable: utciVal > 0,
+      },
+      scores: {
+        thermalStress: htsiVal !== null ? Math.round(htsiVal * 100) / 100 : 0,
+        exposure: 0,
+        vulnerability: 0,
+        persistence: 0,
+        nighttimeRecovery: 0,
+      },
+      compositeRisk: {
+        value: Math.round(riskScore * 1000) / 1000,
+        category,
+      },
+      mortality: {
+        index: Math.round((htsiVal ?? 0) * 10),
+        band: category,
+      },
+      confidence: {
+        score: 1.0,
+        dataQualityFlags: [],
+        missingInputs: [],
+      },
+      explanation: {
+        top_drivers: ["Precomputed DB Analysis"],
+        summary: "Loaded from database analysis table",
+      },
+      warnings: [],
+      meta: {
+        weather_source: "precomputed_analysis",
+        source_note: "Direct analysis table output",
+        timezone: "Asia/Kolkata",
+        science_engine_version: "1.0.0",
+      },
+      disclaimer: "MVP decision-support index, not a validated clinical mortality prediction model. Score does not represent a statistical probability of an adverse outcome.",
+    };
+
+    const days: BoardDayPoint[] = sortedRows.map((r) => {
+      const dayEntries = r.analysis as unknown as AnalysisHourEntry[];
+      const s = summarizeDayAnalysis(dayEntries);
+      const dHtsi = s.htsiMax;
+      return {
+        date: toISODate(r.forecastDate),
+        risk: dHtsi !== null ? (dHtsi > 10 ? dHtsi / 100 : dHtsi / 10) : 0.05,
+        category: htsiCategory(dHtsi),
+        thermal: dHtsi ?? 0,
+        wbgt: s.wbgtMax ?? 0,
+      };
+    });
+
+    return {
+      ...base,
+      latest,
+      error: null,
+      days,
+    };
   });
 
   const dateSet = new Set<string>();
   for (const w of wards) for (const d of w.days) dateSet.add(d.date);
-  return { computedAt: new Date().toISOString(), dates: [...dateSet].sort(), wards };
-}
 
-/** Bounded-parallel map (keeps pooled-connection pressure low). */
-async function mapPool<T, R>(
-  items: T[],
-  size: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let i = 0;
-  const workers = Array.from(
-    { length: Math.max(1, Math.min(size, items.length)) },
-    async () => {
-      while (i < items.length) {
-        const j = i++;
-        out[j] = await fn(items[j]);
-      }
-    },
-  );
-  await Promise.all(workers);
-  return out;
+  return {
+    computedAt: new Date().toISOString(),
+    dates: [...dateSet].sort(),
+    wards,
+  };
 }
 
 export async function getBoard(

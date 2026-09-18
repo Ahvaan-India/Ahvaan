@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SubCard } from "./SubCard";
+import { METRIC_EXPLANATIONS } from "@/lib/enums/weather.enum";
 import type { DeltaDir } from "@/lib/console";
 import { TrendingDown, TrendingUp, Minus } from "lucide-react";
 
@@ -249,6 +250,7 @@ export function TelemetryPanel({
               unit={m.temp !== null ? "°C" : undefined}
               qualifier={m.qualifiers.temp}
               qualifierTone={toneFor(m.qualifiers.temp)}
+              tooltip={METRIC_EXPLANATIONS.thermal}
               footer={
                 <span className="mt-1.5 inline-flex">
                   <Arrow dir={m.deltas.temp} />
@@ -262,6 +264,7 @@ export function TelemetryPanel({
               unit={m.humidity !== null ? "%" : undefined}
               qualifier={m.qualifiers.humidity}
               qualifierTone={toneFor(m.qualifiers.humidity)}
+              tooltip="Relative Humidity (%): Percentage of moisture in air compared to maximum saturation."
               footer={
                 <span className="mt-1.5 inline-flex">
                   <Arrow dir={m.deltas.humidity} />
@@ -275,6 +278,7 @@ export function TelemetryPanel({
               unit={m.wind !== null ? "m/s" : undefined}
               qualifier={m.qualifiers.wind ? `${m.qualifiers.wind}` : null}
               qualifierTone={toneFor(m.qualifiers.wind)}
+              tooltip="Wind Speed (m/s): Higher air movement enhances convective heat dissipation."
               footer={
                 <span className="mt-1.5 inline-flex">
                   <Arrow dir={m.deltas.wind} />
@@ -288,6 +292,7 @@ export function TelemetryPanel({
               unit={m.solar !== null ? "W/m²" : undefined}
               qualifier={m.qualifiers.solar}
               qualifierTone={toneFor(m.qualifiers.solar)}
+              tooltip="Shortwave Solar Radiation (W/m²): Direct solar heat flux load."
               footer={
                 <span className="mt-1.5 inline-flex">
                   <Arrow dir={m.deltas.solar} />
@@ -312,23 +317,27 @@ export function TelemetryPanel({
               icon={Users}
               label="Total Population"
               value={d.totalPopulation.toLocaleString("en-IN")}
+              tooltip={METRIC_EXPLANATIONS.exposure}
             />
             <SubCard
               icon={Baby}
               label={`Elderly (${d.elderlyCutoff})`}
               value={`${(d.elderlyPct * 100).toFixed(1)}%`}
               qualifier={d.elderlyDefaulted ? "Default" : "Census"}
+              tooltip={METRIC_EXPLANATIONS.vulnerability}
             />
             <SubCard
               icon={Home}
               label="Informal Settlement"
               value={d.settlementDensity}
               qualifier={d.informalDefaulted ? "Default" : "Survey"}
+              tooltip="Informal housing density index: reflects structural insulation deficiency and heat retention."
             />
             <SubCard
               icon={Briefcase}
               label="Outdoor Workers"
               value={`${(d.outdoorWorkerPct * 100).toFixed(1)}%`}
+              tooltip="Outdoor Workforce (%): Proportion of workers with high direct solar exposure during peak daylight hours."
             />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">

@@ -41,10 +41,7 @@ export function addDays(dateStr: string, days: number): string {
 }
 
 /**
- * Normalize a PG `date` value to YYYY-MM-DD. The pg driver returns a
- * UTC-midnight Date at runtime (drizzle types it as string), and JSON
- * round-trips through Redis turn Dates into ISO strings — all three shapes
- * collapse to the same day key here.
+ * Normalize a PG `date` value to YYYY-MM-DD.
  */
 export function toISODate(v: string | Date | unknown): string {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
@@ -61,13 +58,6 @@ export function istNow(): Date {
   return new Date(Date.now());
 }
 
-/**
- * Parse a live `weather.timestamp` value into the true UTC instant.
- * The column is `timestamp without time zone` holding IST wall clock
- * ("2026-09-24 23:00:00"); plain `new Date(str)` is HOST-DEPENDENT for such
- * strings (IST laptop vs UTC server differ by 5.5h), so always go through
- * here. Date inputs pass through untouched.
- */
 export function parseISTWall(value: string | Date): Date {
   if (value instanceof Date) return value;
   const m =
@@ -82,11 +72,6 @@ export function parseISTWall(value: string | Date): Date {
   );
 }
 
-/**
- * Format a true instant as an IST wall-clock string for naive-column
- * comparisons (`timestamp` cols compare deterministically wall-to-wall,
- * independent of the DB session time zone).
- */
 export function toISTWall(at: Date): string {
   const ist = new Date(at.getTime() + IST_OFFSET_MS);
   const p = (n: number) => String(n).padStart(2, "0");
@@ -103,10 +88,32 @@ export function currentIstHourLabel(at: Date = new Date()): string {
 
 export { IST_OFFSET_MS };
 
-/** Stored HTSI for one hour. Older engine rows lack HTSI → null (never computed here). */
+/** Extract all metrics from an hourly analysis entry regardless of key casing */
+export function getAnalysisMetrics(e: any) {
+  const a = (e?.analysis ?? {}) as Record<string, unknown>;
+  const inp = (e?.input ?? {}) as Record<string, unknown>;
+
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) ? v : null;
+
+  const htsi = num(a.HTSI ?? a.htsi);
+  const wbgt = num(a.WBGT ?? a.wbgt);
+  const hi = num(a.HI ?? a.hi);
+  const utci = num(a.UTCI ?? a.utci);
+  const wbt = num(a.WBT ?? a.wbt);
+
+  const temp = num(inp.temperature2m ?? inp.temp ?? inp.temperature);
+  const humidity = num(inp.relativeHumidity2m ?? inp.humidity ?? inp.rh);
+  const wind = num(inp.windSpeed10m ?? inp.wind ?? inp.wind_speed);
+  const solar = num(inp.shortwaveRadiation ?? inp.solar ?? inp.solar_radiation);
+  const realFeel = num(inp.apparentTemperature ?? inp.realFeel ?? inp.apparent_temperature);
+
+  return { htsi, wbgt, hi, utci, wbt, temp, humidity, wind, solar, realFeel };
+}
+
+/** Stored HTSI for one hour. */
 export function storedHtsi(entry: AnalysisHourEntry): number | null {
-  const v = (entry.analysis as { HTSI?: unknown }).HTSI;
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
+  return getAnalysisMetrics(entry).htsi;
 }
 
 export interface DaySummary {
@@ -121,7 +128,7 @@ export interface DaySummary {
 
 /** Presentational rollup of stored hourly values (max/mean of what is stored). */
 export function summarizeDayAnalysis(entries: AnalysisHourEntry[]): DaySummary {
-  if (entries.length === 0) {
+  if (!entries || entries.length === 0) {
     return {
       hours: 0,
       htsiMax: null,
@@ -140,9 +147,9 @@ export function summarizeDayAnalysis(entries: AnalysisHourEntry[]): DaySummary {
   let utciMax = -Infinity;
   let peakHour: string | null = null;
   let peakWbgtHour: string | null = null;
+
   for (const e of entries) {
-    const a = e.analysis;
-    const htsi = storedHtsi(e);
+    const { htsi, wbgt, hi, utci } = getAnalysisMetrics(e);
     if (htsi !== null) {
       htsiSum += htsi;
       htsiCount++;
@@ -151,20 +158,21 @@ export function summarizeDayAnalysis(entries: AnalysisHourEntry[]): DaySummary {
         peakHour = e.hour;
       }
     }
-    if (a.WBGT > wbgtMax) {
-      wbgtMax = a.WBGT;
+    if (wbgt !== null && wbgt > wbgtMax) {
+      wbgtMax = wbgt;
       peakWbgtHour = e.hour;
     }
-    if (a.HI > hiMax) hiMax = a.HI;
-    if (a.UTCI > utciMax) utciMax = a.UTCI;
+    if (hi !== null && hi > hiMax) hiMax = hi;
+    if (utci !== null && utci > utciMax) utciMax = utci;
   }
+
   return {
     hours: entries.length,
     htsiMax: htsiCount > 0 ? Number(htsiMax.toFixed(2)) : null,
     htsiMean: htsiCount > 0 ? Number((htsiSum / htsiCount).toFixed(2)) : null,
-    wbgtMax: Number(wbgtMax.toFixed(2)),
-    heatIndexMax: Number(hiMax.toFixed(2)),
-    utciMax: Number(utciMax.toFixed(2)),
+    wbgtMax: Number.isFinite(wbgtMax) ? Number(wbgtMax.toFixed(2)) : null,
+    heatIndexMax: Number.isFinite(hiMax) ? Number(hiMax.toFixed(2)) : null,
+    utciMax: Number.isFinite(utciMax) ? Number(utciMax.toFixed(2)) : null,
     peakHour: peakHour ?? peakWbgtHour,
   };
 }

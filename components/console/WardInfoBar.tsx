@@ -5,6 +5,7 @@ import { X, Download, MapPin, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getWardLocality } from "@/lib/geo/wardNames";
 import { useRouter } from "next/navigation";
+import { RiskBadge } from "@/components/console/RiskBadge";
 import type { Telemetry } from "@/components/console/TelemetryPanel";
 import type { MapWard } from "@/components/map/KolkataMap";
 
@@ -30,6 +31,7 @@ export function WardInfoBar({ selectedId, selectedCell, displayId, displayCell, 
   const activeCell = displayCell ?? selectedCell;
   const ward = activeCell?.ward ?? (telemetry as any)?.ward ?? selectedCell?.ward ?? null;
   const locality = getWardLocality(ward);
+  const category = activeCell?.category ?? (telemetry as any)?.risk?.category ?? "LOW";
   const openAnalytics = () => router.push(`/analysis?ward=${displayId ?? selectedId}`);
 
   return (
@@ -41,13 +43,14 @@ export function WardInfoBar({ selectedId, selectedCell, displayId, displayCell, 
             initial={{ x: 20, opacity: 0 }}
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 20, opacity: 0 }}
-            transition={{ duration: 0.2 }}
+            transition={{ duration: 0.15 }}
             className="hidden w-[420px] shrink-0 flex-col border-l bg-card lg:flex"
           >
             <div className="flex items-center justify-between border-b bg-card p-4">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h2 className="font-extrabold">Ward {ward ?? selectedId}</h2>
+                  <h2 className="font-extrabold text-base">Ward {ward ?? selectedId}</h2>
+                  <RiskBadge category={category} />
                 </div>
                 {locality ? (
                   <p className="flex items-center gap-1 truncate text-xs font-normal text-primary"><MapPin className="h-3 w-3 text-primary" />{locality}</p>
@@ -84,7 +87,8 @@ export function WardInfoBar({ selectedId, selectedCell, displayId, displayCell, 
             <div className="flex shrink-0 items-center justify-between border-b p-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h2 className="font-bold">Ward {ward ?? selectedId}</h2>
+                  <h2 className="font-bold text-base">Ward {ward ?? selectedId}</h2>
+                  <RiskBadge category={category} />
                 </div>
                 {locality ? (
                   <p className="flex items-center gap-1 truncate text-xs font-normal text-primary"><MapPin className="h-3 w-3 text-primary" />{locality}</p>

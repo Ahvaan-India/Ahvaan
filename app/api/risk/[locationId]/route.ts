@@ -27,8 +27,9 @@ interface RouteParams {
  *  422 → DataGapError (insufficient data, explicit  never silent garbage)
  *  500 → unexpected
  */
-export async function GET(_req: Request, { params }: RouteParams) {
-  const { locationId: raw } = await params;
+export async function GET(_req: Request, { params }: { params: any }) {
+  const resolvedParams = await Promise.resolve(params);
+  const raw = resolvedParams?.locationId;
   const locationId = Number(raw);
 
   if (!Number.isInteger(locationId) || locationId <= 0) {

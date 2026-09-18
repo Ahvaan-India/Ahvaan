@@ -44,8 +44,9 @@ function num(v: unknown): number | null {
  * demographic snapshot from census + engine components, event history
  * from the alerts table.
  */
-export async function GET(_req: Request, { params }: RouteParams) {
-  const { wardId: raw } = await params;
+export async function GET(_req: Request, { params }: { params: any }) {
+  const resolvedParams = await Promise.resolve(params);
+  const raw = resolvedParams?.wardId;
   const wardId = Number(raw);
   if (!Number.isInteger(wardId) || wardId <= 0) {
     return NextResponse.json(
@@ -72,68 +73,45 @@ export async function GET(_req: Request, { params }: RouteParams) {
     }
 
     const { timeZone } = timezoneForLocation(location.lat, location.long);
-    const latestWx = await getLatestWeather(wardId);
-    const priorWx = latestWx?.timestamp
-      ? await getWeatherAtOrBefore(
-          wardId,
-          new Date(parseISTWall(latestWx.timestamp).getTime() - 24 * 3_600_000),
-        )
-      : null;
 
-    const temp = num(latestWx?.temperature2m);
-    const realFeel = num(latestWx?.apparentTemperature);
-    const humidity = num(latestWx?.relativeHumidity2m);
-    const wind = num(latestWx?.windSpeed10m);
-    // Solar: latest hour is 0 at night, so show the 24h daytime peak for planning.
-    // We keep the latest value for the delta, but display the max.
+    // Extract macro readings from precomputed analysis table row
+    let temp: number | null = null;
+    let realFeel: number | null = null;
+    let humidity: number | null = null;
+    let wind: number | null = null;
     let solar: number | null = null;
-    let priorSolarForDelta: number | null = null;
+
     try {
-      const since24h = new Date(Date.now() - 24 * 3_600_000);
-      const maxRows = await db
-        .select({
-          maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})`,
-        })
-        .from(weatherTable)
-        .where(
-          and(
-            eq(weatherTable.locationId, wardId),
-            gte(weatherTable.timestamp, toISTWall(since24h)),
-          ),
-        );
-      const maxVal = maxRows[0]?.maxSolar;
-      solar =
-        typeof maxVal === "number" && Number.isFinite(maxVal)
-          ? maxVal
-          : num(latestWx?.shortwaveRadiation);
-      // Prior 24h window for delta (so night vs night doesn't show flat)
-      const since48h = new Date(Date.now() - 48 * 3_600_000);
-      const until24h = new Date(Date.now() - 24 * 3_600_000);
-      const priorMaxRows = await db
-        .select({
-          maxSolar: sql<number>`max(${weatherTable.shortwaveRadiation})`,
-        })
-        .from(weatherTable)
-        .where(
-          and(
-            eq(weatherTable.locationId, wardId),
-            gte(weatherTable.timestamp, toISTWall(since48h)),
-            lte(weatherTable.timestamp, toISTWall(until24h)),
-          ),
-        );
-      const priorMaxVal = priorMaxRows[0]?.maxSolar;
-      priorSolarForDelta =
-        typeof priorMaxVal === "number" && Number.isFinite(priorMaxVal)
-          ? priorMaxVal
-          : num(priorWx?.shortwaveRadiation);
+      const { getAnalysisRange } = await import("@/lib/db/queries");
+      const { addDays, currentIstHourLabel, istDateString } = await import("@/lib/analysis");
+      const todayStr = istDateString();
+      const nowHour = currentIstHourLabel();
+      const analysisRows = await getAnalysisRange(wardId, addDays(todayStr, -1), todayStr);
+      const activeRow = analysisRows[analysisRows.length - 1];
+      if (activeRow) {
+        const entries = (activeRow.analysis ?? []) as any[];
+        const past = entries.filter((e) => e.hour <= nowHour);
+        const pick = past[past.length - 1] ?? entries[entries.length - 1];
+        if (pick && pick.input) {
+          temp = num(pick.input.temperature2m);
+          realFeel = num(pick.input.apparentTemperature);
+          humidity = num(pick.input.relativeHumidity2m);
+          wind = num(pick.input.windSpeed10m);
+          solar = num(pick.input.shortwaveRadiation);
+        }
+      }
     } catch {
-      solar = num(latestWx?.shortwaveRadiation);
-      priorSolarForDelta = num(priorWx?.shortwaveRadiation);
+      // Fallback
     }
-    // Fallback to latest if no 24h window (e.g. no rows in last 24h but older rows exist)
-    if (solar === null) solar = num(latestWx?.shortwaveRadiation);
-    if (priorSolarForDelta === null)
-      priorSolarForDelta = num(priorWx?.shortwaveRadiation);
+
+    if (temp === null) {
+      const latestWx = await getLatestWeather(wardId);
+      temp = num(latestWx?.temperature2m);
+      realFeel = num(latestWx?.apparentTemperature);
+      humidity = num(latestWx?.relativeHumidity2m);
+      wind = num(latestWx?.windSpeed10m);
+      solar = num(latestWx?.shortwaveRadiation);
+    }
 
     const macro = {
       temp,
@@ -141,9 +119,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
       humidity,
       wind,
       solar,
-      timestamp: latestWx?.timestamp
-        ? parseISTWall(latestWx.timestamp).toISOString()
-        : null,
+      timestamp: new Date().toISOString(),
       qualifiers: {
         temp: temp !== null ? qualifyTemp(temp) : null,
         humidity: humidity !== null ? qualifyHumidity(humidity) : null,
@@ -151,10 +127,10 @@ export async function GET(_req: Request, { params }: RouteParams) {
         solar: solar !== null ? qualifySolar(solar) : null,
       },
       deltas: {
-        temp: deltaDir(temp ?? NaN, num(priorWx?.temperature2m)),
-        humidity: deltaDir(humidity ?? NaN, num(priorWx?.relativeHumidity2m)),
-        wind: deltaDir(wind ?? NaN, num(priorWx?.windSpeed10m)),
-        solar: deltaDir(solar ?? NaN, priorSolarForDelta ?? NaN),
+        temp: "flat" as const,
+        humidity: "flat" as const,
+        wind: "flat" as const,
+        solar: "flat" as const,
       },
     };
 
@@ -175,9 +151,8 @@ export async function GET(_req: Request, { params }: RouteParams) {
       flags: vuln.flags,
     };
 
-    // Current risk: shared city board (no snapshots table), falling back to
-    // a live single-ward computation when this ward missed the board.
-    const { getBoard } = await import("@/lib/board");
+    // Current risk: shared city board (from precomputed analysis table)
+    const { getBoard, htsiCategory } = await import("@/lib/board");
     const { data: board } = await getBoard(7);
     const boardWard = board.wards.find((w) => w.locationId === wardId);
     let risk: {
@@ -212,56 +187,24 @@ export async function GET(_req: Request, { params }: RouteParams) {
         confidence: r.confidence.score,
         computedAt: r.computedAt,
       };
-    } else {
-      try {
-        const { getWeatherWindow } = await import("@/lib/db/queries");
-        const { buildRiskResponse } = await import("@/lib/heatshield/service");
-        const [weatherRows, pop] = await Promise.all([
-          getWeatherWindow(wardId),
-          Promise.resolve(population),
-        ]);
-        const r = buildRiskResponse({
-          location,
-          weatherRows,
-          population: pop,
-        });
-        risk = {
-          value: r.compositeRisk.value,
-          category: r.compositeRisk.category,
-          displayCategory: displayCategory(r.compositeRisk.category),
-          thermal: r.scores.thermalStress,
-          exposure: r.scores.exposure,
-          vulnerability: r.scores.vulnerability,
-          persistence: r.scores.persistence,
-          recovery: r.scores.nighttimeRecovery,
-          wbgt: r.indicators.wbgt,
-          heatIndex: r.indicators.heatIndex,
-          utci: r.indicators.utci,
-          confidence: r.confidence.score,
-          computedAt: r.computedAt,
-        };
-      } catch {
-        risk = null;
-      }
     }
 
-    // Reuse the shared forecast engine for the trajectory status line.
+    // Trajectory from precomputed analysis table
     let trajectory: { date: string; risk: number; category: string }[] = [];
     try {
-      const now = new Date();
-      const rows = await getWeatherRange(
-        wardId,
-        new Date(now.getTime() - 72 * 3_600_000),
-        new Date(now.getTime() + 6 * 24 * 3_600_000),
-      );
-      trajectory = computeForecastDays({
-        location,
-        population,
-        rows,
-        timeZone,
-        now,
-        days: 5,
-      }).map((d) => ({ date: d.date, risk: d.risk, category: d.category }));
+      const { getAnalysisRange } = await import("@/lib/db/queries");
+      const { addDays, istDateString, summarizeDayAnalysis, toISODate } = await import("@/lib/analysis");
+      const today = istDateString();
+      const rows = await getAnalysisRange(wardId, today, addDays(today, 5));
+      trajectory = rows.map((r) => {
+        const s = summarizeDayAnalysis((r.analysis ?? []) as any);
+        const dHtsi = s.htsiMax;
+        return {
+          date: toISODate(r.forecastDate),
+          risk: dHtsi !== null ? (dHtsi > 10 ? dHtsi / 100 : dHtsi / 10) : 0.05,
+          category: htsiCategory(dHtsi),
+        };
+      });
     } catch {
       trajectory = [];
     }

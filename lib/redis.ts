@@ -223,14 +223,19 @@ export async function invalidateAnalysis(
   if (date) {
     await redisDel(redisKeys.analysis(locationId, date));
   } else {
-    await redisDel(`ahvaan:analysis:${locationId}:`);
+    await redisDel(`ahvaan:analysis:${locationId}:*`);
   }
+  await redisDel(redisKeys.showcase(locationId));
+  await redisDel(`ahvaan:telemetry:${locationId}`);
+  await redisDel(redisKeys.heatmap);
+  await redisDel(redisKeys.summary);
+  await redisDel("ahvaan:board:*");
 }
 
 export async function invalidateWard(locationId: number): Promise<void> {
   await redisDel(redisKeys.location(locationId));
   await redisDel(redisKeys.population(locationId));
-  await redisDel(`ahvaan:wx:${locationId}:`);
+  await redisDel(`ahvaan:wx:${locationId}:*`);
   await invalidateAnalysis(locationId);
   await redisDel(redisKeys.heatmap);
   await redisDel(redisKeys.summary);

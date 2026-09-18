@@ -29,8 +29,9 @@ interface RouteParams {
  * Wards map 1:1 to locations, so wardId == locationId here.
  * Short edge cache (10 min)  model runs refresh hourly, not per second.
  */
-export async function GET(req: Request, { params }: RouteParams) {
-  const { locationId: raw } = await params;
+export async function GET(req: Request, { params }: { params: any }) {
+  const resolvedParams = await Promise.resolve(params);
+  const raw = resolvedParams?.locationId;
   const locationId = Number(raw);
   if (!Number.isInteger(locationId) || locationId <= 0) {
     return NextResponse.json(

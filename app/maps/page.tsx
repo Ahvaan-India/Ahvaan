@@ -24,6 +24,15 @@ import {
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { riskFillForCategory, riskPanelClass } from "@/lib/risk";
+import {
+  displayCategory,
+  qualifyTemp,
+  qualifyHumidity,
+  qualifyWind,
+  qualifySolar,
+  settlementDensity,
+} from "@/lib/console";
+import { METRIC_EXPLANATIONS } from "@/lib/enums/weather.enum";
 import { TopBar } from "@/components/console/TopBar";
 import { LeftNav } from "@/components/layout/LeftNav";
 import {
@@ -31,6 +40,7 @@ import {
   type MapWard,
   layerStepFor,
 } from "@/components/map/KolkataMap";
+import { getWardLocality } from "@/lib/geo/wardNames";
 import { WardInfoBar } from "@/components/console/WardInfoBar";
 import {
   Select,
@@ -96,31 +106,59 @@ function fmtVal(v: number | null | undefined, digits = 1): string {
   return typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "-";
 }
 
+function getOrdinalDay(dateStr: string): string {
+  const day = Number(dateStr.slice(8, 10));
+  if (!day || Number.isNaN(day)) return dateStr;
+  if (day > 3 && day < 21) return `${day}th`;
+  switch (day % 10) {
+    case 1:
+      return `${day}st`;
+    case 2:
+      return `${day}nd`;
+    case 3:
+      return `${day}rd`;
+    default:
+      return `${day}th`;
+  }
+}
+
 function WardDetailBody({
   telemetry,
   forecast,
   selectedCell,
   selectedId,
+  displayCell,
+  displayId,
 }: any) {
+  const activeId = displayId ?? selectedId;
+  const activeCell = displayCell ?? selectedCell;
   const router = useRouter();
   const onAnalyticsOpen = () => {
-    if (selectedId) router.push(`/analysis?ward=${selectedId}`);
+    if (activeId) router.push(`/analysis?ward=${activeId}`);
     else router.push("/analysis");
   };
   const { data: showcase } = useSWR(
-    selectedId ? `/api/showcase/${selectedId}` : null,
+    activeId ? `/api/showcase/${activeId}` : null,
     jsonFetch,
+    {
+      keepPreviousData: true,
+      dedupingInterval: 10000,
+      revalidateOnFocus: false,
+    },
   );
+
   const days: any[] = showcase?.days ?? [];
   const [dayIdx, setDayIdx] = useState(0);
   const [hour, setHour] = useState<string | null>(null);
   useEffect(() => {
     setDayIdx(0);
     setHour(null);
-  }, [selectedId]);
+  }, [activeId]);
+
   const safeDayIdx = Math.min(dayIdx, Math.max(0, days.length - 1));
   const day = days[safeDayIdx] ?? null;
   const hourly: any[] = day?.hourly ?? [];
+
   // Default hour = the NEXT hour from now (9:45 → 10:00), never a daily
   // average. Falls back to the nearest available hour on that day.
   const nextHourLabel = useMemo(() => {
@@ -131,19 +169,6 @@ function WardDetailBody({
     }).format(new Date());
     return `${String((Number(parts) + 1) % 24).padStart(2, "0")}:00:00`;
   }, []);
-  const defaultHour =
-    safeDayIdx === 0
-      ? hourly.some((h: any) => h.hour === nextHourLabel)
-        ? nextHourLabel
-        : (hourly.find((h: any) => h.hour > nextHourLabel)?.hour ??
-          hourly[hourly.length - 1]?.hour ??
-          null)
-      : (day?.summary?.peakHour ?? null);
-  const activeHour = hour ?? defaultHour;
-  const entry =
-    hourly.find((h: any) => h.hour === activeHour) ??
-    hourly[hourly.length - 1] ??
-    null;
 
   // Next-24h strip (weather-app style): remaining hours today + tomorrow on.
   const next24h = useMemo(() => {
@@ -166,13 +191,40 @@ function WardDetailBody({
     return flat;
   }, [days]);
 
-  if (!telemetry)
+  if (!telemetry) {
     return (
-      <div className="space-y-3 p-4">
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-32 w-full" />
+      <div className="space-y-4 p-4 animate-pulse">
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <Skeleton className="h-28 w-full rounded-xl" />
+        <Skeleton className="h-36 w-full rounded-xl" />
       </div>
     );
+  }
+
+  const defaultHour =
+    safeDayIdx === 0
+      ? hourly.some((h: any) => h.hour === nextHourLabel)
+        ? nextHourLabel
+        : (hourly.find((h: any) => h.hour > nextHourLabel)?.hour ??
+          hourly[hourly.length - 1]?.hour ??
+          null)
+      : (day?.summary?.peakHour ?? null);
+  const activeHour = hour ?? defaultHour;
+  const entry =
+    hourly.find((h: any) => h.hour === activeHour) ??
+    hourly[hourly.length - 1] ??
+    null;
+
+  const activeEntry = entry ?? (showcase as any)?.current ?? null;
+  const htsiVal = activeEntry?.htsi ?? (telemetry as any)?.risk?.indicators?.htsi ?? (telemetry as any)?.risk?.thermal ?? null;
+  const wbgtVal = activeEntry?.wbgt ?? (telemetry as any)?.risk?.indicators?.wbgt ?? (telemetry as any)?.risk?.wbgt ?? null;
+  const hiVal = activeEntry?.hi ?? (telemetry as any)?.risk?.indicators?.heatIndex ?? (telemetry as any)?.risk?.heatIndex ?? null;
+  const utciVal = activeEntry?.utci ?? (telemetry as any)?.risk?.indicators?.utci ?? (telemetry as any)?.risk?.utci ?? null;
+  const tempVal = activeEntry?.temp ?? (telemetry as any)?.macro?.temp ?? null;
+  const humidityVal = activeEntry?.humidity ?? (telemetry as any)?.macro?.humidity ?? null;
+  const windVal = activeEntry?.wind ?? (telemetry as any)?.macro?.wind ?? null;
+  const solarVal = activeEntry?.solar ?? (telemetry as any)?.macro?.solar ?? null;
+
   return (
     <div className="space-y-5 p-4">
       <div>
@@ -181,7 +233,12 @@ function WardDetailBody({
             <Clock className="h-3.5 w-3.5" /> Date & time
           </span>
         </SectionLabel>
-        {days.length > 0 ? (
+        {showcase === undefined ? (
+          <div className="space-y-2">
+            <Skeleton className="h-8 w-full rounded-full" />
+            <Skeleton className="h-10 w-full rounded-xl" />
+          </div>
+        ) : days.length > 0 ? (
           <div className="space-y-2">
             <div className="custom-scrollbar flex gap-1.5 overflow-x-auto pb-1">
               {days.map((d: any, i: number) => (
@@ -193,7 +250,7 @@ function WardDetailBody({
                   }}
                   className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold tabular-nums ${i === safeDayIdx ? "bg-red-600 text-white" : "border border-border bg-card hover:bg-muted"}`}
                 >
-                  {i === 0 ? "Today" : d.forecastDate.slice(8, 10) + "th"}
+                  {i === 0 ? "Today" : getOrdinalDay(d.forecastDate)}
                 </button>
               ))}
             </div>
@@ -202,7 +259,7 @@ function WardDetailBody({
                 Hour (IST)
               </span>
               <Select
-                value={entry?.hour ?? ""}
+                value={activeEntry?.hour ?? ""}
                 onValueChange={(v) => setHour(v || null)}
               >
                 <SelectTrigger className="h-10 w-full rounded-xl border-border bg-muted/40 text-sm font-semibold tabular-nums shadow-sm focus:ring-2 focus:ring-red-600/40">
@@ -233,25 +290,40 @@ function WardDetailBody({
             </div>
           </div>
         ) : (
-          <p className="text-xs text-muted-foreground">
-            Hourly engine data unavailable for this ward.
-          </p>
+          <div className="rounded-xl border border-border bg-muted/30 p-3 text-xs leading-relaxed text-muted-foreground">
+            <p className="font-semibold text-foreground">
+              Hourly Analysis Pending
+            </p>
+            <p className="mt-1">
+              Hourly precomputed analysis table entries are pending for this
+              location cell. Real-time telemetry, microclimate, and composite
+              heat risk parameters above remain live.
+            </p>
+          </div>
         )}
       </div>
       <div>
-        <SectionLabel>Risk & Mortality</SectionLabel>
+        <SectionLabel>HTSI & Mortality</SectionLabel>
         <div className="grid grid-cols-2 gap-2">
           <Card className="overflow-hidden border-2 border-primary/20 shadow-sm">
             <div className="h-2 bg-gradient-to-r from-teal-500 via-orange-500 to-red-600" />
             <CardContent className="p-3">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                <Flame className="h-3 w-3" /> Risk
+                <Flame className="h-3 w-3 text-red-500" /> HTSI
               </p>
               <p className="text-3xl font-black tabular-nums">
-                {telemetry.risk ? telemetry.risk.value.toFixed(3) : "-"}
+                {htsiVal !== null ? htsiVal.toFixed(2) : "-"}
               </p>
               <p className="text-xs font-medium text-muted-foreground">
-                {telemetry.risk?.displayCategory ?? ""}
+                {htsiVal !== null
+                  ? htsiVal >= 80
+                    ? "Extreme Thermal Stress"
+                    : htsiVal >= 60
+                      ? "High Thermal Stress"
+                      : htsiVal >= 30
+                        ? "Moderate Thermal Stress"
+                        : "Low Thermal Stress"
+                  : (telemetry?.risk?.displayCategory ?? "")}
               </p>
             </CardContent>
           </Card>
@@ -268,13 +340,11 @@ function WardDetailBody({
               <Card>
                 <CardContent className="p-3">
                   <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <HeartPulse className="h-3 w-3" /> Mortality
+                    <HeartPulse className="h-3 w-3 text-green-500" /> Mortality
                   </p>
                   <p className="text-3xl font-black tabular-nums">
                     {mort.index}
-                    <span className="text-base font-semibold text-muted-foreground">
-                      /100
-                    </span>
+                    <span className="text-sm font-semibold text-muted-foreground">/100</span>
                   </p>
                   <p className="text-xs text-muted-foreground">{mort.band}</p>
                 </CardContent>
@@ -335,66 +405,33 @@ function WardDetailBody({
           <span className="flex items-center gap-1.5">Heat Metrics</span>
         </SectionLabel>
         <div className="grid grid-cols-2 gap-2">
-          {entry ? (
-            <>
-              <SubCard
-                icon={Flame}
-                label="HTSI"
-                value={fmtVal(entry.htsi, 0)}
-                unit="/100"
-              />
-              <SubCard
-                icon={Thermometer}
-                label="WBGT"
-                value={fmtVal(entry.wbgt)}
-                unit="°C"
-              />
-              <SubCard
-                icon={Flame}
-                label="Heat Index"
-                value={fmtVal(entry.hi)}
-                unit="°C"
-              />
-              <SubCard
-                icon={Sun}
-                label="UTCI"
-                value={fmtVal(entry.utci)}
-                unit="°C"
-              />
-            </>
-          ) : (
-            <>
-              <SubCard
-                icon={Thermometer}
-                label="WBGT"
-                value={telemetry.risk ? telemetry.risk.wbgt.toFixed(1) : "-"}
-                unit="°C"
-              />
-              <SubCard
-                icon={Flame}
-                label="Heat Index"
-                value={
-                  telemetry.risk ? telemetry.risk.heatIndex.toFixed(1) : "-"
-                }
-                unit="°C"
-              />
-              <SubCard
-                icon={Sun}
-                label="UTCI"
-                value={
-                  telemetry.risk?.utci != null
-                    ? (telemetry.risk.utci as number).toFixed(1)
-                    : "-"
-                }
-                unit="°C"
-              />
-              <SubCard
-                icon={Activity}
-                label="Thermal Stress"
-                value={telemetry.risk ? telemetry.risk.thermal.toFixed(2) : "-"}
-              />
-            </>
-          )}
+          <SubCard
+            icon={Thermometer}
+            label="WBGT"
+            value={fmtVal(wbgtVal, 1)}
+            unit="°C"
+            tooltip={METRIC_EXPLANATIONS.wbgt}
+          />
+          <SubCard
+            icon={Flame}
+            label="Heat Index"
+            value={fmtVal(hiVal, 1)}
+            unit="°C"
+            tooltip={METRIC_EXPLANATIONS.heatIndex}
+          />
+          <SubCard
+            icon={Sun}
+            label="UTCI"
+            value={fmtVal(utciVal, 1)}
+            unit="°C"
+            tooltip={METRIC_EXPLANATIONS.utci}
+          />
+          <SubCard
+            icon={Activity}
+            label="Thermal Stress"
+            value={fmtVal(htsiVal, 2)}
+            tooltip={METRIC_EXPLANATIONS.thermal}
+          />
         </div>
       </div>
       <div>
@@ -403,26 +440,57 @@ function WardDetailBody({
           <SubCard
             icon={Thermometer}
             label="Temp"
-            value={fmtVal(entry?.temp ?? telemetry.macro.temp)}
+            value={fmtVal(tempVal, 1)}
             unit="°C"
+            tooltip={METRIC_EXPLANATIONS.thermal}
           />
           <SubCard
             icon={Droplet}
             label="Humidity"
-            value={fmtVal(entry?.humidity ?? telemetry.macro.humidity, 0)}
+            value={fmtVal(humidityVal, 0)}
             unit="%"
+            tooltip="Relative Humidity (%): Moisture level in the ambient air."
           />
           <SubCard
             icon={Wind}
             label="Wind"
-            value={fmtVal(entry?.wind ?? telemetry.macro.wind)}
+            value={fmtVal(windVal, 1)}
             unit="m/s"
+            tooltip="Wind Velocity (m/s): Air movement speed helping heat dissipation."
           />
           <SubCard
             icon={Sun}
             label="Solar"
-            value={fmtVal(entry?.solar ?? telemetry.macro.solar, 0)}
+            value={fmtVal(solarVal, 0)}
             unit="W/m²"
+            tooltip="Solar Radiation (W/m²): Direct solar heat load."
+          />
+        </div>
+      </div>
+      <div>
+        <SectionLabel>Demographics & Population</SectionLabel>
+        <div className="grid grid-cols-2 gap-2">
+          <SubCard
+            icon={Users}
+            label="Population"
+            value={
+              typeof telemetry?.demographics?.totalPopulation === "number" && telemetry.demographics.totalPopulation > 0
+                ? telemetry.demographics.totalPopulation.toLocaleString("en-IN")
+                : typeof activeCell?.population === "number" && activeCell.population > 0
+                  ? activeCell.population.toLocaleString("en-IN")
+                  : "-"
+            }
+            tooltip="Total estimated census population for this ward."
+          />
+          <SubCard
+            icon={Users}
+            label="Outdoor Workers"
+            value={
+              typeof telemetry?.demographics?.outdoorWorkerPct === "number" && telemetry.demographics.outdoorWorkerPct > 0
+                ? `${(telemetry.demographics.outdoorWorkerPct * 100).toFixed(0)}%`
+                : "-"
+            }
+            tooltip="Estimated proportion of outdoor workers exposed to heat."
           />
         </div>
       </div>
@@ -549,11 +617,11 @@ function WardDetailBody({
                 </div>
                 <div className="flex items-center justify-between text-xs">
                   <span className="font-bold tabular-nums">
-                    Risk {(d.risk * 100).toFixed(0)}/100
+                    HTSI {d.htsiMax ? d.htsiMax.toFixed(2) : (d.risk * 100).toFixed(0)}
                   </span>
                   {d.mortality && (
                     <span className="flex items-center gap-1 text-muted-foreground">
-                      <HeartPulse className="h-3 w-3" /> {d.mortality.index}
+                      <HeartPulse className="h-3 w-3" /> {d.mortality.index}/100
                     </span>
                   )}
                 </div>
@@ -599,14 +667,14 @@ const LAYER_PILL_META: Record<
 > = {
   thermal: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "Thermal stress < 20" },
-      { cat: "MODERATE", label: "Moderate", hint: "Thermal stress 20–60" },
-      { cat: "HIGH", label: "High", hint: "Thermal stress 60–80" },
-      { cat: "VERY_HIGH", label: "Extreme", hint: "Thermal stress ≥ 80" },
+      { cat: "LOW", label: "Low", hint: "HTSI < 20" },
+      { cat: "MODERATE", label: "Moderate", hint: "HTSI 20–60" },
+      { cat: "HIGH", label: "High", hint: "HTSI 60–80" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "HTSI ≥ 80" },
     ],
-    fmt: (v) => (v * 100).toFixed(0),
-    suffix: "/100",
-    avgHint: "Mean thermal stress across visible wards (×100)",
+    fmt: (v) => (v * 100).toFixed(2),
+    suffix: "",
+    avgHint: "Mean HTSI across visible wards",
   },
   exposure: {
     bands: [
@@ -660,7 +728,7 @@ export default function MapsPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounced(search, 180);
   const deferredSearch = useDeferredValue(debouncedSearch);
-  const [layer, setLayer] = useState<MapLayer>("risk");
+  const [layer, setLayer] = useState<MapLayer>("thermal");
   const [filters, setFilters] = useState<{ cats: Set<string>; popMin: number }>(
     () => ({
       cats: new Set(["LOW", "MODERATE", "HIGH", "VERY_HIGH"]),
@@ -673,21 +741,28 @@ export default function MapsPage() {
   const reduceMotion = !!useReducedMotion();
   const shouldAnimate = !reduceMotion && !isMobile;
 
-  const { data: summary } = useSWR("/api/wards/summary", jsonFetch);
-  const { data: heatmap } = useSWR("/api/wards/heatmap", jsonFetch);
+  const swrOpts = useMemo(
+    () => ({
+      keepPreviousData: true,
+      dedupingInterval: 10000,
+      revalidateOnFocus: false,
+    }),
+    [],
+  );
+
+  const { data: summary } = useSWR("/api/wards/summary", jsonFetch, swrOpts);
+  const { data: heatmap } = useSWR("/api/wards/heatmap", jsonFetch, swrOpts);
   const displayId = hoveredId ?? selectedId;
   const { data: telemetryRaw } = useSWR(
     displayId ? `/api/wards/${displayId}/telemetry` : null,
     jsonFetch,
+    swrOpts,
   );
   const { data: forecastRaw } = useSWR(
     displayId ? `/api/forecast/${displayId}?days=5` : null,
     jsonFetch,
+    swrOpts,
   );
-  // SWR keeps the previous ward's payload while a new one loads (and after
-  // hover ends) — only use data that matches the ward actually displayed.
-  const telemetry = telemetryRaw?.wardId === displayId ? telemetryRaw : null;
-  const forecast = forecastRaw?.locationId === displayId ? forecastRaw : null;
   const cells = (heatmap as any)?.wards ?? [];
   const selectedCell = selectedId
     ? (cells.find((c: any) => c.wardId === selectedId) ?? null)
@@ -695,6 +770,60 @@ export default function MapsPage() {
   const displayCell = displayId
     ? (cells.find((c: any) => c.wardId === displayId) ?? null)
     : null;
+
+  const forecast = forecastRaw?.locationId === displayId ? forecastRaw : null;
+
+  const telemetry = useMemo(() => {
+    if (telemetryRaw?.wardId === displayId) return telemetryRaw;
+    if (!displayCell) return null;
+    return {
+      wardId: displayCell.wardId,
+      ward: displayCell.ward,
+      wardName: displayCell.wardName ?? null,
+      timezone: "Asia/Kolkata",
+      risk: {
+        value: displayCell.riskScore ?? 0,
+        category: displayCell.category ?? "LOW",
+        displayCategory: displayCategory(displayCell.category ?? "LOW"),
+        thermal: displayCell.thermal ?? 0,
+        exposure: displayCell.exposure ?? 0,
+        vulnerability: displayCell.vulnerability ?? 0,
+        persistence: displayCell.persistence ?? 0,
+        recovery: displayCell.recovery ?? 0,
+        wbgt: displayCell.wbgt ?? 0,
+        heatIndex: displayCell.heatIndex ?? 0,
+        utci: displayCell.utci ?? null,
+        confidence: displayCell.confidence ?? 1.0,
+        computedAt: new Date().toISOString(),
+      },
+      macro: {
+        temp: displayCell.temp ?? displayCell.heatIndex ?? null,
+        realFeel: displayCell.heatIndex ?? null,
+        humidity: displayCell.humidity ?? null,
+        wind: displayCell.wind ?? null,
+        solar: displayCell.solar ?? null,
+        timestamp: new Date().toISOString(),
+        qualifiers: {
+          temp: qualifyTemp(displayCell.heatIndex ?? 30),
+          humidity: qualifyHumidity(displayCell.humidity ?? 60),
+          wind: qualifyWind(displayCell.wind ?? 2),
+          solar: qualifySolar(displayCell.solar ?? 300),
+        },
+        deltas: { temp: "flat", humidity: "flat", wind: "flat", solar: "flat" },
+      },
+      demographics: {
+        totalPopulation: displayCell.population ?? 0,
+        elderlyPct: displayCell.elderlyPct ?? 0.1,
+        elderlyCutoff: ">60",
+        elderlyDefaulted: false,
+        childrenPct: displayCell.childrenPct ?? 0.08,
+        outdoorWorkerPct: displayCell.outdoorWorkerPct ?? 0.15,
+        informalIndex: displayCell.informalIndex ?? 0.2,
+        informalDefaulted: false,
+        settlementDensity: settlementDensity(displayCell.informalIndex ?? 0.2),
+      },
+    };
+  }, [telemetryRaw, displayId, displayCell]);
   // Frontend-side alert evaluation (lib/alerts.ts): no DB, nothing saved.
   // Combines the board risk with the cell's engine indexes when present.
   const modalEvaluation = useMemo(() => {
@@ -739,7 +868,7 @@ export default function MapsPage() {
   // layer buckets wards by their painted 1–5 step: 1 Low, 2–3 Moderate,
   // 4 High, 5 Extreme). Trailing chip is Load for risk, layer mean otherwise.
   const pill = useMemo(() => {
-    if (layer === "risk") {
+    if ((layer as string) === "risk") {
       return {
         bands: [
           {
@@ -807,27 +936,37 @@ export default function MapsPage() {
     };
   }, [layer, summary, filteredCells]);
 
+  const { data: showcase } = useSWR(
+    displayId ? `/api/showcase/${displayId}` : null,
+    jsonFetch,
+    swrOpts,
+  );
+
   const downloadTelemetry = useCallback(() => {
     if (!telemetry) return;
-    const blob = new Blob(
-      [
-        JSON.stringify(
-          { ...telemetry, forecast: (forecast as any)?.days ?? [] },
-          null,
-          2,
-        ),
-      ],
-      { type: "application/json" },
-    );
+    const exportData = {
+      wardId: telemetry.wardId,
+      ward: telemetry.ward,
+      wardName: telemetry.wardName,
+      locality: getWardLocality(telemetry.ward),
+      timezone: telemetry.timezone ?? "Asia/Kolkata",
+      downloadedAt: new Date().toISOString(),
+      currentTelemetry: telemetry,
+      precomputedAnalysis: (showcase as any)?.days ?? [],
+      forecastOutlook: (forecast as any)?.days ?? [],
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `telemetry-ward-${(telemetry as any).ward ?? selectedId}.json`;
+    a.download = `ward-${telemetry.ward ?? displayId ?? selectedId}-analysis-telemetry.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-  }, [telemetry, forecast, selectedId]);
+  }, [telemetry, showcase, forecast, selectedId, displayId]);
 
   return (
     <div className="flex h-[100dvh] flex-col bg-background">
@@ -871,6 +1010,7 @@ export default function MapsPage() {
                 onHover={setHoveredId}
                 searchQuery={deferredSearch}
                 layer={layer}
+                onOpenControls={() => setControlsOpen(true)}
               />
             )}
             {/* Layer-aware summary pill — distribution always matches the
@@ -907,13 +1047,6 @@ export default function MapsPage() {
                 </div>
               </div>
             )}
-            <button
-              onClick={() => setControlsOpen(true)}
-              className="absolute bottom-[172px] right-3 z-20 flex h-9 w-9 items-center justify-center rounded-full border bg-card shadow-lg hover:bg-accent"
-              aria-label="Map layers"
-            >
-              <Layers className="h-4 w-4" />
-            </button>
           </div>
         </div>
         <WardInfoBar
@@ -931,6 +1064,8 @@ export default function MapsPage() {
             forecast={forecast as any}
             selectedCell={selectedCell}
             selectedId={selectedId}
+            displayCell={displayCell}
+            displayId={displayId}
           />
         </WardInfoBar>
       </div>

@@ -2,24 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Map, BarChart3, Bell, X } from "lucide-react";
+import { Activity, Map, BarChart3, Bell, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useNav } from "@/lib/navContext";
+import { NAV_ITEMS } from "@/lib/config/navConfig";
+import { APP_CONFIG } from "@/lib/config/appConfig";
 
-const NAV = [
-  { label: "Overview", href: "/overview", icon: LayoutDashboard },
-  { label: "Maps", href: "/maps", icon: Map },
-  { label: "Analysis", href: "/analysis", icon: BarChart3 },
-  { label: "Alerts & Actions", href: "/alerts", icon: Bell },
-];
+const ICON_MAP = {
+  Activity,
+  Map,
+  BarChart3,
+  Bell,
+  Shield: Activity,
+};
 
 function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   return (
     <>
-      {NAV.map((n) => {
+      {NAV_ITEMS.map((n) => {
+        const IconComponent = ICON_MAP[n.iconName as keyof typeof ICON_MAP] ?? Activity;
         const active =
           pathname === n.href ||
           (n.href !== "/" && pathname.startsWith(n.href));
@@ -35,7 +39,7 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
             )}
           >
-            <n.icon className="h-4 w-4" />
+            <IconComponent className="h-4 w-4 shrink-0" />
             {n.label}
           </Link>
         );
@@ -49,8 +53,8 @@ function SideFooter() {
   return (
     <div className="flex items-center justify-between border-t p-3">
       <div className="px-1 text-xs text-muted-foreground">
-        <p className="font-semibold">Ahvaan</p>
-        <p>Kolkata heat-risk</p>
+        <p className="font-semibold">{APP_CONFIG.name}</p>
+        <p>{APP_CONFIG.subtitle} heat-risk</p>
       </div>
       <ThemeToggle />
     </div>

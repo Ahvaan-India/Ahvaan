@@ -1,14 +1,15 @@
 /**
  * HeatWatch console shared logic (pure, no I/O): watch levels, ops display
- * labels, qualifier bands, and delta helpers. Visual color tokens for the
- * 5-step risk scale live in the frontend; severity ordering lives here so
- * API + UI agree.
+ * labels, qualifier bands, and delta helpers.
  */
+
+import { WEATHER_THRESHOLDS, WeatherQualifier } from "@/lib/enums/weather.enum";
 
 /** Ops display label for engine categories (VERY_HIGH reads as Extreme). */
 export function displayCategory(category: string): string {
   switch (category) {
     case "VERY_HIGH":
+    case "EXTREME":
       return "Extreme";
     case "HIGH":
       return "High";
@@ -38,30 +39,30 @@ export function riskStep(risk: number): 1 | 2 | 3 | 4 | 5 {
 
 /** Qualifier badge text for macro readings (documented comfort bands). */
 export function qualifyHumidity(rh: number): string {
-  if (rh >= 85) return "Very high";
-  if (rh >= 70) return "Elevated";
-  if (rh >= 40) return "Moderate";
-  return "Low";
+  if (rh >= WEATHER_THRESHOLDS.humidity.veryHigh) return WeatherQualifier.VERY_HIGH;
+  if (rh >= WEATHER_THRESHOLDS.humidity.elevated) return WeatherQualifier.ELEVATED;
+  if (rh >= WEATHER_THRESHOLDS.humidity.moderate) return WeatherQualifier.MODERATE;
+  return WeatherQualifier.LOW;
 }
 
 export function qualifyWind(ms: number): string {
-  if (ms < 1.5) return "Low";
-  if (ms < 4) return "Moderate";
-  return "Breezy";
+  if (ms < WEATHER_THRESHOLDS.wind.moderate) return WeatherQualifier.LOW;
+  if (ms < WEATHER_THRESHOLDS.wind.breezy) return WeatherQualifier.MODERATE;
+  return WeatherQualifier.BREEZY;
 }
 
 export function qualifySolar(wm2: number): string {
-  if (wm2 >= 600) return "Extreme";
-  if (wm2 >= 400) return "High";
-  if (wm2 >= 150) return "Moderate";
-  return "Low";
+  if (wm2 >= WEATHER_THRESHOLDS.solar.extreme) return WeatherQualifier.EXTREME;
+  if (wm2 >= WEATHER_THRESHOLDS.solar.high) return WeatherQualifier.HIGH;
+  if (wm2 >= WEATHER_THRESHOLDS.solar.moderate) return WeatherQualifier.MODERATE;
+  return WeatherQualifier.LOW;
 }
 
 export function qualifyTemp(c: number): string {
-  if (c >= 40) return "Extreme";
-  if (c >= 35) return "High";
-  if (c >= 30) return "Elevated";
-  return "Moderate";
+  if (c >= WEATHER_THRESHOLDS.temperature.extreme) return WeatherQualifier.EXTREME;
+  if (c >= WEATHER_THRESHOLDS.temperature.high) return WeatherQualifier.HIGH;
+  if (c >= WEATHER_THRESHOLDS.temperature.elevated) return WeatherQualifier.ELEVATED;
+  return WeatherQualifier.MODERATE;
 }
 
 /** Categorical settlement density from the informal-housing index (0–1). */

@@ -10,11 +10,9 @@ export const dynamic = "force-dynamic";
  * shared city board — no snapshots table). One point per available IST
  * date (weather window permitting), oldest→newest, same shape as before.
  */
-export async function GET(
-  req: Request,
-  { params }: { params: Promise<{ wardId: string }> },
-) {
-  const { wardId: raw } = await params;
+export async function GET(req: Request, { params }: { params: any }) {
+  const resolvedParams = await Promise.resolve(params);
+  const raw = resolvedParams?.wardId;
   const wardId = Number(raw);
   if (!Number.isInteger(wardId) || wardId <= 0) {
     return NextResponse.json({ error: "Invalid wardId" }, { status: 400 });
