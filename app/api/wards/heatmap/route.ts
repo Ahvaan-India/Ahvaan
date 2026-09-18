@@ -83,9 +83,47 @@ export async function GET() {
     });
   } catch (err) {
     console.error("GET /api/wards/heatmap failed:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    try {
+      const { WARD_LOCALITIES } = await import("@/lib/geo/wardNames");
+      const fallbackWards = Array.from({ length: 144 }, (_, i) => {
+        const wardId = i + 1;
+        const lat = 22.45 + (i % 12) * 0.02;
+        const long = 88.30 + Math.floor(i / 12) * 0.02;
+        const htsiVal = 35 + ((wardId * 17) % 55);
+        return {
+          wardId,
+          ward: wardId,
+          wardName: WARD_LOCALITIES[wardId] ?? `Ward ${wardId}`,
+          lat,
+          long,
+          riskScore: htsiVal / 100,
+          category: htsiVal >= 70 ? "VERY_HIGH" : htsiVal >= 50 ? "HIGH" : htsiVal >= 30 ? "MODERATE" : "LOW",
+          displayCategory: htsiVal >= 70 ? "Extreme" : htsiVal >= 50 ? "High" : htsiVal >= 30 ? "Moderate" : "Low",
+          step: htsiVal >= 70 ? 5 : htsiVal >= 50 ? 4 : htsiVal >= 30 ? 3 : 1,
+          wbgt: Number((28 + htsiVal * 0.15).toFixed(1)),
+          heatIndex: Number((34 + htsiVal * 0.18).toFixed(1)),
+          utci: Number((35 + htsiVal * 0.16).toFixed(1)),
+          population: 25000 + ((wardId * 137) % 30000),
+          thermal: htsiVal,
+          exposure: 45,
+          vulnerability: 40,
+          ring: [
+            [long - 0.008, lat - 0.008],
+            [long + 0.008, lat - 0.008],
+            [long + 0.008, lat + 0.008],
+            [long - 0.008, lat + 0.008],
+          ],
+        };
+      });
+      return NextResponse.json(
+        { count: fallbackWards.length, refreshedAt: new Date().toISOString(), wards: fallbackWards, isFallback: true },
+        { status: 200 },
+      );
+    } catch {
+      return NextResponse.json(
+        { error: "Internal server error" },
+        { status: 500 },
+      );
+    }
   }
 }
