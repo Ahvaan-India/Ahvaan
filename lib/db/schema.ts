@@ -1,11 +1,14 @@
 import {
+  date,
   doublePrecision,
   index,
   integer,
   jsonb,
   pgTable,
   serial,
+  text,
   timestamp,
+  unique,
   varchar,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
@@ -13,27 +16,43 @@ import { relations } from "drizzle-orm";
 /**
  * Ahvaan  Drizzle schema.
  *
- * Three tables keyed by locationId -> locations.id:
- *  - locations:  one row per modelled cell / point
- *  - weather:    hourly meteorological rows per location
- *  - population: census rows per location (latest `year` wins)
+ * Mirrors the LIVE Postgres database exactly (introspected 2026-09-18):
+ *  - locations:  141 KMC wards. district/ward mirror the census codes
+ *    (`district` is TEXT, e.g. "342"), lat/long are NULLABLE, `status` is
+ *    active|inactive, last_refresh is NOT NULL default now().
+ *  - weather:    240 hourly rows/location (10-day Open-Meteo window).
+ *    `timestamp` is WITHOUT time zone and stores ASIA/KOLKATA WALL CLOCK
+ *    (e.g. "2026-09-18 00:00:00") — see lib/db/index.ts timestamp parser.
+ *  - population: 141 census rows, metric ints NOT NULL, year default 2011.
+ *  - analysis:   precomputed engine days (locationId, forecastDate) unique.
+ *  - alerts / alert_deliveries / ward_snapshots: website ops tables
+ *    (created by scripts/create-ops-tables.sql; absent from the original
+ *    ingestion DB).
  *
- * Do not rename columns without a migration; the calculation engine
- * and query layer depend on these names.
+ * Do not rename columns without a migration; the calculation engine,
+ * query layer, and cron scripts depend on these names.
  */
 
 export const locationsTable = pgTable("locations", {
   id: serial("id").primaryKey(),
-  lat: doublePrecision("lat").notNull(),
-  long: doublePrecision("long").notNull(),
+  district: text("district").notNull(),
+  ward: integer("ward").notNull(),
+  lat: doublePrecision("lat"),
+  long: doublePrecision("long"),
   geometry: jsonb("geometry"),
-  lastRefresh: timestamp("last_refresh", { withTimezone: true }),
+  status: text("status").notNull().default("active"),
+  lastRefresh: timestamp("last_refresh", {
+    withTimezone: true,
+    mode: "date",
+  })
+    .notNull()
+    .defaultNow(),
 });
 
 export const weatherTable = pgTable(
   "weather",
   {
-    id: serial("id").primaryKey(),
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     locationId: integer("locationId")
       .notNull()
       .references(() => locationsTable.id, { onDelete: "cascade" }),
@@ -49,7 +68,15 @@ export const weatherTable = pgTable(
     diffuseRadiation: doublePrecision("diffuseRadiation"),
     precipitation: doublePrecision("precipitation"),
     rain: doublePrecision("rain"),
-    timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
+    // Naive timestamp holding IST wall clock, exactly as the upstream
+    // ingestion writes it (Open-Meteo `timezone=Asia/Kolkata` hourly.time +
+    // ":00", e.g. "2026-09-18 00:00:00"). Drizzle `mode: "string"` returns
+    // the raw wall string on every host (the driver's Date parsing is
+    // host-TZ-dependent for naive timestamps) — interpret values ONLY via
+    // parseISTWall() and build comparisons with toISTWall() (lib/analysis).
+    // Range comparisons are then wall-to-wall, independent of the DB
+    // session time zone.
+    timestamp: timestamp("timestamp", { mode: "string" }).notNull(),
   },
   (t) => [
     // Required for the 72h lookback window to stay within Vercel
@@ -62,61 +89,65 @@ export const weatherTable = pgTable(
 export const populationTable = pgTable(
   "population",
   {
-    id: serial("id").primaryKey(),
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     locationId: integer("locationId")
       .notNull()
       .references(() => locationsTable.id, { onDelete: "cascade" }),
-    // Census hierarchy / labels (present in live DB, unused by engine)
-    state: integer("state"),
-    district: integer("district"),
-    ward: integer("ward"),
+    // Census hierarchy / labels (`ward_name` e.g. "Kolkata (M Corp.) WARD NO.-0001")
+    state: integer("state").notNull(),
+    district: integer("district").notNull(),
+    ward: integer("ward").notNull(),
     enumerationBlock: integer("enumerationBlock"),
     level: varchar("level"),
-    wardName: varchar("ward_name"),
+    wardName: varchar("ward_name").notNull(),
     tru: varchar("tru"),
-    totalPopulation: integer("totalPopulation"),
-    malePopulation: integer("malePopulation"),
-    femalePopulation: integer("femalePopulation"),
-    children0To6: integer("children0To6"),
-    literatePopulation: integer("literatePopulation"),
-    illiteratePopulation: integer("illiteratePopulation"),
-    totalWorkers: integer("totalWorkers"),
+    totalPopulation: integer("totalPopulation").notNull(),
+    malePopulation: integer("malePopulation").notNull(),
+    femalePopulation: integer("femalePopulation").notNull(),
+    children0To6: integer("children0To6").notNull(),
+    literatePopulation: integer("literatePopulation").notNull(),
+    illiteratePopulation: integer("illiteratePopulation").notNull(),
+    totalWorkers: integer("totalWorkers").notNull(),
     // Main workers (worked >= 6 months), by occupation
-    mainWorkers: integer("mainWorkers"),
-    mainCultivators: integer("mainCultivators"),
-    mainAgriculturalLabourers: integer("mainAgriculturalLabourers"),
-    mainHouseholdIndustryWorkers: integer("mainHouseholdIndustryWorkers"),
-    mainOtherWorkers: integer("mainOtherWorkers"),
-    // Marginal worker totals (present in live DB)
-    marginalWorkers: integer("marginalWorkers"),
-    marginalCultivators: integer("marginalCultivators"),
-    marginalAgriculturalLabourers: integer("marginalAgriculturalLabourers"),
+    mainWorkers: integer("mainWorkers").notNull(),
+    mainCultivators: integer("mainCultivators").notNull(),
+    mainAgriculturalLabourers: integer("mainAgriculturalLabourers").notNull(),
+    mainHouseholdIndustryWorkers: integer(
+      "mainHouseholdIndustryWorkers",
+    ).notNull(),
+    mainOtherWorkers: integer("mainOtherWorkers").notNull(),
+    // Marginal worker totals
+    marginalWorkers: integer("marginalWorkers").notNull(),
+    marginalCultivators: integer("marginalCultivators").notNull(),
+    marginalAgriculturalLabourers: integer(
+      "marginalAgriculturalLabourers",
+    ).notNull(),
     marginalHouseholdIndustryWorkers: integer(
       "marginalHouseholdIndustryWorkers",
-    ),
-    marginalOtherWorkers: integer("marginalOtherWorkers"),
-    marginalWorkers3To6: integer("marginalWorkers3To6"),
-    marginalWorkers0To3: integer("marginalWorkers0To3"),
+    ).notNull(),
+    marginalOtherWorkers: integer("marginalOtherWorkers").notNull(),
+    marginalWorkers3To6: integer("marginalWorkers3To6").notNull(),
+    marginalWorkers0To3: integer("marginalWorkers0To3").notNull(),
     // Marginal workers (worked < 6 months): 3–6 month split
-    marginalCultivators3To6: integer("marginalCultivators3To6"),
+    marginalCultivators3To6: integer("marginalCultivators3To6").notNull(),
     marginalAgriculturalLabourers3To6: integer(
       "marginalAgriculturalLabourers3To6",
-    ),
+    ).notNull(),
     marginalHouseholdIndustryWorkers3To6: integer(
       "marginalHouseholdIndustryWorkers3To6",
-    ),
-    marginalOtherWorkers3To6: integer("marginalOtherWorkers3To6"),
+    ).notNull(),
+    marginalOtherWorkers3To6: integer("marginalOtherWorkers3To6").notNull(),
     // Marginal workers: 0–3 month split
-    marginalCultivators0To3: integer("marginalCultivators0To3"),
+    marginalCultivators0To3: integer("marginalCultivators0To3").notNull(),
     marginalAgriculturalLabourers0To3: integer(
       "marginalAgriculturalLabourers0To3",
-    ),
+    ).notNull(),
     marginalHouseholdIndustryWorkers0To3: integer(
       "marginalHouseholdIndustryWorkers0To3",
-    ),
-    marginalOtherWorkers0To3: integer("marginalOtherWorkers0To3"),
-    nonWorkers: integer("nonWorkers"),
-    year: integer("year").notNull(),
+    ).notNull(),
+    marginalOtherWorkers0To3: integer("marginalOtherWorkers0To3").notNull(),
+    nonWorkers: integer("nonWorkers").notNull(),
+    year: integer("year").notNull().default(2011),
   },
   (t) => [index("population_location_year_idx").on(t.locationId, t.year)],
 );
@@ -145,84 +176,97 @@ export type WeatherRow = typeof weatherTable.$inferSelect;
 export type PopulationRow = typeof populationTable.$inferSelect;
 
 // ---------------------------------------------------------------------------
-// HeatWatch ops console: alerts, deliveries, snapshots.
-// Wards map 1:1 to locations (locationId == ward's location row), so wardId
-// below is a locations.id. Snapshots are insert-only history: each refresh
-// appends one row per ward; "latest" = max(computedAt) per ward.
+// Upstream (avhaan-db / ahvaan-engine): precomputed per-day heat analysis.
+// One row per (locationId, forecastDate). `analysis` is a JSON array of 24
+// hourly entries: [{ hour: "13:00:00", analysis: { HTSI, WBGT, HI, UTCI, WBT },
+// input: <weather row snapshot> }]. Written by the engine pipeline, read by
+// the website (Redis-cached) so dashboard requests never recompute
+// WBGT/HI/UTCI per hit.
+//
+// NOTE: this project keeps NO ops tables. There is no snapshots/alerts/
+// deliveries layer — board views (heatmap/summary/trend) are derived
+// on demand (lib/board.ts, Redis-cached) and alerts are evaluated
+// client-side (lib/alerts.ts) with nothing saved to the DB.
 // ---------------------------------------------------------------------------
 
-/** Operator-facing heat alerts. One row per ward per active episode. */
-export const alertsTable = pgTable(
-  "alerts",
-  {
-    id: serial("id").primaryKey(),
-    wardId: integer("wardId")
-      .notNull()
-      .references(() => locationsTable.id, { onDelete: "cascade" }),
-    severity: varchar("severity", { length: 20 }).notNull(), // HIGH | EXTREME
-    riskScore: doublePrecision("riskScore").notNull(),
-    peakWindowStart: timestamp("peakWindowStart", {
-      withTimezone: true,
-    }).notNull(),
-    peakWindowEnd: timestamp("peakWindowEnd", { withTimezone: true }).notNull(),
-    advisoryText: varchar("advisoryText", { length: 500 }),
-    triggeredAt: timestamp("triggeredAt", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-    status: varchar("status", { length: 20 }).notNull().default("active"), // active | resolved
-  },
-  (t) => [index("alerts_ward_status_idx").on(t.wardId, t.status)],
-);
+// ---------------------------------------------------------------------------
+// Upstream (avhaan-db / ahvaan-engine): precomputed per-day heat analysis.
+// One row per (locationId, forecastDate). `analysis` is a JSON array of 24
+// hourly entries: [{ hour: "13:00:00", analysis: { HTSI, WBGT, HI, UTCI, WBT },
+// input: <weather row snapshot> }]. Written by the engine (`npm run
+// analysis:update`), read by the website (Redis-cached) so dashboard requests
+// never recompute WBGT/HI/UTCI per hit.
+// ---------------------------------------------------------------------------
 
-/**
- * Audit log for the WhatsApp prototype button. Logs INITIATION (operator
- * clicked send and opened wa.me), not delivery confirmation  the Click to
- * Chat deep link gives no callback. `status` is forward-compatible with a
- * future Business Cloud API migration (sent/delivered/read/failed).
- */
-export const alertDeliveriesTable = pgTable(
-  "alert_deliveries",
+export const analysisTable = pgTable(
+  "analysis",
   {
-    id: serial("id").primaryKey(),
-    alertId: integer("alertId").references(() => alertsTable.id, {
-      onDelete: "set null",
-    }),
-    channel: varchar("channel", { length: 20 }).notNull().default("whatsapp"),
-    recipientPhone: varchar("recipientPhone", { length: 20 }),
-    messageText: varchar("messageText", { length: 1000 }),
-    sentAt: timestamp("sentAt", { withTimezone: true }).notNull().defaultNow(),
-    sentBy: varchar("sentBy", { length: 100 }),
-    status: varchar("status", { length: 20 }).notNull().default("initiated"),
-  },
-  (t) => [index("deliveries_alert_idx").on(t.alertId)],
-);
-
-/** Point-in-time per-ward risk rollup. Powers heatmap/KPI/alerts (fast reads). */
-export const wardSnapshotsTable = pgTable(
-  "ward_snapshots",
-  {
-    id: serial("id").primaryKey(),
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
     locationId: integer("locationId")
       .notNull()
       .references(() => locationsTable.id, { onDelete: "cascade" }),
-    risk: doublePrecision("risk").notNull(),
-    category: varchar("category", { length: 20 }).notNull(),
-    thermal: doublePrecision("thermal").notNull(),
-    exposure: doublePrecision("exposure").notNull(),
-    vulnerability: doublePrecision("vulnerability").notNull(),
-    persistence: doublePrecision("persistence").notNull(),
-    recovery: doublePrecision("recovery").notNull(),
-    wbgt: doublePrecision("wbgt").notNull(),
-    heatIndex: doublePrecision("heatIndex").notNull(),
-    utci: doublePrecision("utci"),
-    confidence: doublePrecision("confidence").notNull(),
-    computedAt: timestamp("computedAt", { withTimezone: true })
+    // PG `date`: the pg driver returns a UTC-midnight Date at runtime even
+    // though drizzle types it as string — always normalize with toISODate().
+    forecastDate: date("forecastDate").notNull(),
+    analysis: jsonb("analysis").notNull(),
+    createdAt: timestamp("createdAt", {
+      withTimezone: true,
+      mode: "string",
+    })
       .notNull()
       .defaultNow(),
   },
-  (t) => [index("snapshots_location_time_idx").on(t.locationId, t.computedAt)],
+  (t) => [unique().on(t.locationId, t.forecastDate)],
 );
 
-export type Alert = typeof alertsTable.$inferSelect;
-export type AlertDelivery = typeof alertDeliveriesTable.$inferSelect;
-export type WardSnapshot = typeof wardSnapshotsTable.$inferSelect;
+export type AnalysisRow = typeof analysisTable.$inferSelect;
+export type AnalysisInsert = typeof analysisTable.$inferInsert;
+
+/** Single hourly entry inside `analysis.analysis` (JSONB). */
+export interface AnalysisHourEntry {
+  hour: string;
+  analysis: {
+    /** Stored by current engine runs; absent on rows written before HTSI. */
+    HTSI?: number;
+    WBGT: number;
+    HI: number;
+    UTCI: number;
+    WBT: number;
+  };
+  input: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
+// Upstream (avhaan-db): ingestion audit log. One row per failed ward/source.
+// ---------------------------------------------------------------------------
+
+export const dataIngestionErrorsTable = pgTable("data_ingestion_errors", {
+  id: serial("id").primaryKey(),
+  district: text("district").notNull(),
+  ward: integer("ward").notNull(),
+  source: text("source").notNull(),
+  errorType: text("error_type").notNull(),
+  missingFields: jsonb("missing_fields"),
+  errorMessage: text("error_message"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export type DataIngestionError = typeof dataIngestionErrorsTable.$inferSelect;
+
+// Relations for the upstream tables (declared after the tables above to
+// avoid TDZ issues at module load).
+export const locationsAnalysisRelations = relations(
+  locationsTable,
+  ({ many }) => ({
+    analysis: many(analysisTable),
+  }),
+);
+
+export const analysisRelations = relations(analysisTable, ({ one }) => ({
+  location: one(locationsTable, {
+    fields: [analysisTable.locationId],
+    references: [locationsTable.id],
+  }),
+}));

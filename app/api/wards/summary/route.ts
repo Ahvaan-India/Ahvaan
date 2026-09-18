@@ -1,100 +1,81 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
-import { locationsTable } from "@/lib/db/schema";
-import { getLatestSnapshots, getSnapshotsBefore } from "@/lib/db/queries";
+import { getBoard } from "@/lib/board";
 import { watchLevel } from "@/lib/console";
-import { cached } from "@/lib/cache";
-import { sql } from "drizzle-orm";
+import { REDIS_TTL, redisKeys, withRedisCache } from "@/lib/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/wards/summary  KPI row + watch level from the latest snapshot
- * set. Deltas compare against the snapshot set as of 24h ago (null when no
- * history exists yet, e.g. right after the first refresh run).
- * Cached 20s server-side to avoid hammering snapshot history on每 refresh.
+ * GET /api/wards/summary  KPI row + watch level from the shared city board
+ * (lib/board — no snapshots table). Deltas compare the latest board day
+ * against the previous board day (null when fewer than 2 days compute).
+ * Website → Redis (60s) → Postgres (via the board).
  */
 export async function GET() {
   try {
-    const payload = await cached("summary:v2", 20_000, async () => {
-      const latest = await getLatestSnapshots();
-      if (latest.length === 0) return null;
+    const { data: payload, cached: cacheHit } = await withRedisCache(
+      redisKeys.summary,
+      REDIS_TTL.summary,
+      async () => {
+        const { data: board } = await getBoard(2);
+        const ok = board.wards.filter((w) => w.latest !== null);
+        if (ok.length === 0) return null;
 
-      const count = (pred: (s: (typeof latest)[number]) => boolean) =>
-        latest.filter(pred).length;
-      const active = count((s) => s.snapshot.risk >= 0.5);
-      const extreme = count((s) => s.snapshot.category === "VERY_HIGH");
-      const high = count((s) => s.snapshot.category === "HIGH");
-      const moderate = count((s) => s.snapshot.category === "MODERATE");
-      const low = count((s) => s.snapshot.category === "LOW");
-      const meanRisk =
-        latest.reduce((a, s) => a + s.snapshot.risk, 0) / latest.length;
-      const watch = watchLevel(meanRisk);
-      const refreshedAt = latest
-        .map((s) => s.snapshot.computedAt)
-        .sort((a, b) => +new Date(b!) - +new Date(+a!))[0];
+        const count = (pred: (w: (typeof ok)[number]) => boolean) =>
+          ok.filter(pred).length;
+        const active = count((w) => w.latest!.compositeRisk.value >= 0.5);
+        const extreme = count((w) => w.latest!.compositeRisk.category === "VERY_HIGH");
+        const high = count((w) => w.latest!.compositeRisk.category === "HIGH");
+        const moderate = count((w) => w.latest!.compositeRisk.category === "MODERATE");
+        const low = count((w) => w.latest!.compositeRisk.category === "LOW");
+        const meanRisk =
+          ok.reduce((a, w) => a + w.latest!.compositeRisk.value, 0) / ok.length;
+        const watch = watchLevel(meanRisk);
 
-      let deltas: Record<string, number | null> = {
-        active: null,
-        extreme: null,
-        high: null,
-        moderate: null,
-      };
-      let deltaBasis: string | null = null;
-      try {
-        const before = await getSnapshotsBefore(
-          new Date(Date.now() - 24 * 3_600_000),
-        );
-        if (before.length > 0) {
-          const prevAt = Math.max(
-            ...before.map((b) => +new Date(b.snapshot.computedAt!)),
-          );
-          const spanH = Math.max(
-            0,
-            (+new Date(refreshedAt!) - prevAt) / 3_600_000,
-          );
-          deltaBasis =
-            spanH >= 23 ? "24h" : spanH >= 1 ? `${Math.round(spanH)}h` : "<1h";
-          const c = (pred: (r: number, cat: string) => boolean) =>
-            before.filter((b) => pred(b.snapshot.risk, b.snapshot.category))
+        // Day-over-day deltas from board history (previous computable day).
+        let deltas: Record<string, number | null> = {
+          active: null,
+          extreme: null,
+          high: null,
+          moderate: null,
+        };
+        let deltaBasis: string | null = null;
+        const prevDate = board.dates.length >= 2 ? board.dates[board.dates.length - 2] : null;
+        if (prevDate) {
+          const c = (pred: (d: { risk: number; category: string }) => boolean) =>
+            board.wards.flatMap((w) => w.days.filter((d) => d.date === prevDate)).filter(pred)
               .length;
           deltas = {
-            active: active - c((r) => r >= 0.5),
-            extreme: extreme - c((_, cat) => cat === "VERY_HIGH"),
-            high: high - c((_, cat) => cat === "HIGH"),
-            moderate: moderate - c((_, cat) => cat === "MODERATE"),
+            active: active - c((d) => d.risk >= 0.5),
+            extreme: extreme - c((d) => d.category === "VERY_HIGH"),
+            high: high - c((d) => d.category === "HIGH"),
+            moderate: moderate - c((d) => d.category === "MODERATE"),
           };
+          deltaBasis = "1d";
         }
-      } catch {
-        // deltas stay null  KPI counts are still valid
-      }
 
-      const totalRows = await getDb()
-        .select({ count: sql<number>`count(*)::int` })
-        .from(locationsTable);
-      const total = totalRows[0]?.count ?? 0;
-
-      return {
-        wards: latest.length,
-        synced: latest.length,
-        total,
-        active,
-        extreme,
-        high,
-        moderate,
-        low,
-        deltas,
-        metroHeatLoad: Math.round(meanRisk * 100),
-        watch,
-        refreshedAt,
-        deltaBasis,
-      };
-    });
+        return {
+          wards: ok.length,
+          synced: ok.length,
+          total: board.wards.length,
+          active,
+          extreme,
+          high,
+          moderate,
+          low,
+          deltas,
+          metroHeatLoad: Math.round(meanRisk * 100),
+          watch,
+          refreshedAt: board.computedAt,
+          deltaBasis,
+        };
+      },
+    );
 
     if (!payload) {
       return NextResponse.json(
-        { error: "No snapshots yet  run npm run snapshots first" },
+        { error: "No computable wards in the current window" },
         { status: 422 },
       );
     }
@@ -103,6 +84,7 @@ export async function GET() {
       status: 200,
       headers: {
         "Cache-Control": "public, s-maxage=300, stale-while-revalidate=60",
+        "X-Cache": cacheHit ? "HIT" : "MISS",
       },
     });
   } catch (err) {

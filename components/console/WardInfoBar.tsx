@@ -3,7 +3,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Download, MapPin, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { RiskBadge } from "@/components/console/RiskBadge";
 import { getWardLocality } from "@/lib/geo/wardNames";
 import { useRouter } from "next/navigation";
 import type { Telemetry } from "@/components/console/TelemetryPanel";
@@ -12,6 +11,9 @@ import type { MapWard } from "@/components/map/KolkataMap";
 interface Props {
   selectedId: number | null;
   selectedCell: MapWard | null;
+  /** Ward currently shown (hover preview follows the cursor, else selection). */
+  displayId: number | null;
+  displayCell: MapWard | null;
   telemetry: Telemetry | null;
   forecast: any;
   onClose: () => void;
@@ -19,13 +21,16 @@ interface Props {
   children: React.ReactNode;
 }
 
-export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDownload, children }: Props) {
+export function WardInfoBar({ selectedId, selectedCell, displayId, displayCell, telemetry, onClose, onDownload, children }: Props) {
   const router = useRouter();
   if (!selectedId) return null;
 
-  const ward = selectedCell?.ward ?? (telemetry as any)?.ward ?? null;
+  // Header tracks the same ward as the body data (hover preview included),
+  // falling back to the pinned selection while fresh data loads.
+  const activeCell = displayCell ?? selectedCell;
+  const ward = activeCell?.ward ?? (telemetry as any)?.ward ?? selectedCell?.ward ?? null;
   const locality = getWardLocality(ward);
-  const openAnalytics = () => router.push(`/analysis?ward=${selectedId}`);
+  const openAnalytics = () => router.push(`/analysis?ward=${displayId ?? selectedId}`);
 
   return (
     <>
@@ -43,7 +48,6 @@ export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDo
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="font-extrabold">Ward {ward ?? selectedId}</h2>
-                  {telemetry?.risk && <RiskBadge category={telemetry.risk.category} />}
                 </div>
                 {locality ? (
                   <p className="flex items-center gap-1 truncate text-xs font-normal text-primary"><MapPin className="h-3 w-3 text-primary" />{locality}</p>
@@ -81,7 +85,6 @@ export function WardInfoBar({ selectedId, selectedCell, telemetry, onClose, onDo
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <h2 className="font-bold">Ward {ward ?? selectedId}</h2>
-                  {telemetry?.risk && <RiskBadge category={telemetry.risk.category} />}
                 </div>
                 {locality ? (
                   <p className="flex items-center gap-1 truncate text-xs font-normal text-primary"><MapPin className="h-3 w-3 text-primary" />{locality}</p>

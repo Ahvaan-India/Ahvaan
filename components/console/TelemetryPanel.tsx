@@ -69,16 +69,6 @@ export interface Telemetry {
     informalDefaulted: boolean;
     settlementDensity: string;
   };
-  history: Array<{
-    id: number;
-    severity: string;
-    riskScore: number;
-    peakWindowStart: string | null;
-    peakWindowEnd: string | null;
-    advisoryText: string | null;
-    triggeredAt: string;
-    status: string;
-  }>;
 }
 
 function toneFor(
@@ -158,9 +148,10 @@ function toCSV(data: Telemetry): string {
 }
 
 /**
- * Ward Telemetry & Microclimate Profile: three groups  macro readings as
- * qualifier sub-cards with 24h deltas, demographic snapshot sub-cards
- * (defaults flagged, never silent), and a compact event-history table.
+ * Ward Telemetry & Microclimate Profile: macro readings as qualifier
+ * sub-cards with 24h deltas, plus a demographic snapshot sub-card
+ * (defaults flagged, never silent). Alert history was removed with the ops
+ * tables — alerts are evaluated client-side (lib/alerts.ts) instead.
  */
 export function TelemetryPanel({
   data,
@@ -345,50 +336,6 @@ export function TelemetryPanel({
             “Default” badges mark schema-missing inputs using documented
             constants.
           </p>
-        </div>
-
-        <div>
-          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Event / Alert History
-          </h3>
-          {data.history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No alerts recorded for this ward.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-xs text-muted-foreground">
-                    <th className="py-1 pr-3">Timestamp</th>
-                    <th className="py-1 pr-3">Type</th>
-                    <th className="py-1 pr-3">Score</th>
-                    <th className="py-1 pr-3">Status</th>
-                    <th className="py-1">Action / advisory</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.history.map((h) => (
-                    <tr key={h.id} className="border-t border-border align-top">
-                      <td className="py-1.5 pr-3 tabular-nums">
-                        {new Date(h.triggeredAt).toLocaleString("en-IN", {
-                          timeZone: data.timezone,
-                        })}
-                      </td>
-                      <td className="py-1.5 pr-3 font-semibold">
-                        {h.severity}
-                      </td>
-                      <td className="py-1.5 pr-3 tabular-nums">
-                        {(h.riskScore * 100).toFixed(0)}
-                      </td>
-                      <td className="py-1.5 pr-3">{h.status}</td>
-                      <td className="py-1.5">{h.advisoryText ?? ""}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
         </div>
       </CardContent>
     </Card>

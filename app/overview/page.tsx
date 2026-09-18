@@ -13,7 +13,8 @@ import { useWard } from "@/lib/wardContext";
 import { getWardLocality } from "@/lib/geo/wardNames";
 import { riskFillForCategory } from "@/lib/risk";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { evaluateWardAlert } from "@/lib/alerts";
 
 const jsonFetch = (u: string) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
 
@@ -23,10 +24,33 @@ export default function OverviewPage() {
   const [search, setSearch] = useState("");
   const { data: summary } = useSWR("/api/wards/summary", jsonFetch);
   const { data: heatmap } = useSWR("/api/wards/heatmap", jsonFetch);
-  const { data: alerts } = useSWR("/api/alerts/active", jsonFetch);
 
   const wards = heatmap?.wards ?? [];
-  const alertsList = alerts?.alerts ?? [];
+  // Frontend-side alerts (lib/alerts.ts): evaluated from board risk +
+  // indexes already in hand. Nothing is saved to the DB.
+  const alertsList = useMemo(
+    () =>
+      wards
+        .filter((w: any) => w.riskScore != null)
+        .map((w: any) => ({
+          wardId: w.wardId,
+          ward: w.ward,
+          wardName: w.wardName,
+          riskScore: w.riskScore,
+          evaluation: evaluateWardAlert(
+            {
+              riskScore: w.riskScore,
+              category: w.category,
+              wbgtMax: w.wbgt,
+              heatIndexMax: w.heatIndex,
+            },
+            w.ward !== null && w.ward !== undefined ? `Ward ${w.ward}` : `Location ${w.wardId}`,
+          ),
+        }))
+        .filter((a: any) => a.evaluation.level === "HIGH" || a.evaluation.level === "EXTREME")
+        .sort((a: any, b: any) => b.riskScore - a.riskScore),
+    [wards],
+  );
 
   const validWards = wards.filter((w: any) => w.riskScore != null);
   const catCount = (c: string) => validWards.filter((w: any) => w.category === c).length;
@@ -227,11 +251,11 @@ export default function OverviewPage() {
                 {alertsList.length ? (
                   <div className="space-y-2">
                     {alertsList.slice(0, 3).map((a: any) => (
-                      <div key={a.id} className="flex items-center gap-3 rounded-xl border p-3">
-                        <span className={`h-2.5 w-2.5 rounded-full ${a.severity === "EXTREME" ? "bg-red-600" : "bg-orange-500"}`} />
+                      <div key={a.wardId} className="flex items-center gap-3 rounded-xl border p-3">
+                        <span className={`h-2.5 w-2.5 rounded-full ${a.evaluation.level === "EXTREME" ? "bg-red-600" : "bg-orange-500"}`} />
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold">Ward {a.ward} · {a.wardName ?? ""}</p>
-                          <p className="truncate text-xs text-muted-foreground">{a.advisoryText ?? ""}</p>
+                          <p className="truncate text-xs text-muted-foreground">{a.evaluation.triggers.join(" · ") || a.evaluation.advisory}</p>
                         </div>
                         <span className="text-xs font-bold tabular-nums">{(a.riskScore * 100).toFixed(0)}/100</span>
                       </div>

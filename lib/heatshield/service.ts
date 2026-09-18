@@ -28,6 +28,7 @@ import {
 } from "./explain";
 import { SCIENCE_ENGINE_VERSION } from "./config";
 import { timezoneForLocation } from "../geo/timezone";
+import { parseISTWall } from "../analysis";
 import type { RiskResponse } from "./types";
 import type { Location, PopulationRow, WeatherRow } from "../db/schema";
 import { DataGapError } from "../db/errors";
@@ -110,7 +111,10 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     });
     hourlyScores.push(score);
     hourlyTemps.push(ta);
-    if (row.timestamp) hourlyTimes.push(new Date(row.timestamp));
+    // weather.timestamp is IST wall clock (mode:"string") — parseISTWall
+    // gives the true instant on any host (plain `new Date(str)` is
+    // host-TZ-dependent for naive strings).
+    if (row.timestamp) hourlyTimes.push(parseISTWall(row.timestamp));
   }
 
   if (hourlyScores.length === 0) {
@@ -152,6 +156,12 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   const exposure = computeExposureScore(population, location.geometry);
   const vulnerability = computeVulnerabilityScore(population);
 
+  // Live `locations` allows null coords (never null in practice — all 141
+  // wards have them). Fall back to Kolkata centre so a null can never crash
+  // the response; the fallback is flagged for confidence.
+  const lat = location.lat ?? 22.5726;
+  const long = location.long ?? 88.3639;
+  const coordsMissing = location.lat === null || location.long === null;
   const { timeZone } = timezoneForLocation(location.lat, location.long);
   const persistence = computePersistence(hourlyScores);
   const nighttimeRecovery = computeNighttimeRecovery(hourlyTemps, hourlyTimes, { timeZone });
@@ -174,6 +184,7 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
       ...exposure.flags,
       utciFlag,
       ...(latestUtciEstimated ? ["utci_estimated"] : []),
+      ...(coordsMissing ? ["coords_missing"] : []),
     ]),
   );
   const missingInputs = ["pressure"];
@@ -206,8 +217,8 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
 
   return {
     locationId: location.id,
-    lat: location.lat,
-    long: location.long,
+    lat,
+    long,
     computedAt: new Date().toISOString(),
     indicators: {
       wbgt: round3(latestWbgt),

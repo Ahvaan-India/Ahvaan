@@ -1,15 +1,22 @@
-import { and, asc, desc, gte, lte, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb } from "./index";
 import {
-  alertDeliveriesTable,
-  alertsTable,
+  analysisTable,
+  dataIngestionErrorsTable,
   locationsTable,
   populationTable,
-  wardSnapshotsTable,
   weatherTable,
+  type AnalysisHourEntry,
 } from "./schema";
 import { DataGapError } from "./errors";
 import { WEATHER_WINDOW_HOURS } from "../heatshield/config";
+import {
+  REDIS_TTL,
+  invalidateAnalysis,
+  redisKeys,
+  withRedisCache,
+} from "../redis";
+import { toISODate, toISTWall } from "../analysis";
 
 /**
  * Parameterized Drizzle queries  no raw string SQL.
@@ -19,13 +26,57 @@ import { WEATHER_WINDOW_HOURS } from "../heatshield/config";
 
 type Db = ReturnType<typeof getDb>;
 
-export async function getLocationById(locationId: number, db: Db = getDb()) {
-  const rows = await db
-    .select()
-    .from(locationsTable)
-    .where(eq(locationsTable.id, locationId))
-    .limit(1);
-  return rows[0] ?? null;
+interface CacheOpts {
+  /** Bypass Redis (engine updater / refresh scripts must read fresh rows). */
+  skipCache?: boolean;
+}
+
+function reviveTimestamps<T>(rows: T[], keys: string[] = ["computedAt", "lastRefresh", "triggeredAt", "sentAt", "peakWindowStart", "peakWindowEnd", "createdAt", "created_at"]): T[] {
+  // NOTE: weather `timestamp` is deliberately NOT revived — it is IST wall
+  // clock (mode:"string") and plain `new Date(str)` is host-TZ-dependent.
+  // Consumers must use parseISTWall() (lib/analysis).
+  return rows.map((r) => {
+    const rec = r as unknown as Record<string, unknown>;
+    for (const k of keys) {
+      if (typeof rec[k] === "string") {
+        const d = new Date(rec[k] as string);
+        if (!Number.isNaN(+d)) rec[k] = d;
+      }
+    }
+    return r;
+  });
+}
+
+export async function getLocationById(
+  locationId: number,
+  db: Db = getDb(),
+  opts: CacheOpts = {},
+) {
+  if (opts.skipCache) {
+    const rows = await db
+      .select()
+      .from(locationsTable)
+      .where(eq(locationsTable.id, locationId))
+      .limit(1);
+    return rows[0] ?? null;
+  }
+  const { data } = await withRedisCache(
+    redisKeys.location(locationId),
+    REDIS_TTL.location,
+    async () => {
+      const rows = await db
+        .select()
+        .from(locationsTable)
+        .where(eq(locationsTable.id, locationId))
+        .limit(1);
+      return rows[0] ?? null;
+    },
+  );
+  if (data && typeof (data as unknown as Record<string, unknown>).lastRefresh === "string") {
+    const d = new Date((data as unknown as Record<string, unknown>).lastRefresh as string);
+    if (!Number.isNaN(+d)) (data as unknown as Record<string, unknown>).lastRefresh = d;
+  }
+  return data;
 }
 
 /**
@@ -37,40 +88,62 @@ export async function getWeatherWindow(
   locationId: number,
   hours: number = WEATHER_WINDOW_HOURS,
   db: Db = getDb(),
+  opts: CacheOpts = {},
 ) {
-  const since = new Date(Date.now() - hours * 3_600_000);
-  const rows = await db
-    .select()
-    .from(weatherTable)
-    .where(
-      and(
-        eq(weatherTable.locationId, locationId),
-        gte(weatherTable.timestamp, since),
-      ),
-    )
-    .orderBy(asc(weatherTable.timestamp));
+  const fetch = async () => {
+    const since = new Date(Date.now() - hours * 3_600_000);
+    const rows = await db
+      .select()
+      .from(weatherTable)
+      .where(
+        and(
+          eq(weatherTable.locationId, locationId),
+          // Wall-to-wall comparison: bounds as IST wall strings so the
+          // result is identical on any DB session time zone.
+          gte(weatherTable.timestamp, toISTWall(since)),
+        ),
+      )
+      .orderBy(asc(weatherTable.timestamp));
 
-  if (rows.length === 0) {
-    throw new DataGapError(
-      locationId,
-      `zero weather rows in the last ${hours}h (since ${since.toISOString()})`,
-    );
-  }
-  return rows;
+    if (rows.length === 0) {
+      throw new DataGapError(
+        locationId,
+        `zero weather rows in the last ${hours}h (since ${since.toISOString()})`,
+      );
+    }
+    return rows;
+  };
+  if (opts.skipCache) return fetch();
+  const { data } = await withRedisCache(
+    redisKeys.weatherWindow(locationId, hours),
+    REDIS_TTL.weatherWindow,
+    fetch,
+  );
+  return reviveTimestamps(data);
 }
 
 /** Latest census row for a location (population isn't hourly). Null if none. */
 export async function getLatestPopulation(
   locationId: number,
   db: Db = getDb(),
+  opts: CacheOpts = {},
 ) {
-  const rows = await db
-    .select()
-    .from(populationTable)
-    .where(eq(populationTable.locationId, locationId))
-    .orderBy(desc(populationTable.year))
-    .limit(1);
-  return rows[0] ?? null;
+  const fetch = async () => {
+    const rows = await db
+      .select()
+      .from(populationTable)
+      .where(eq(populationTable.locationId, locationId))
+      .orderBy(desc(populationTable.year))
+      .limit(1);
+    return rows[0] ?? null;
+  };
+  if (opts.skipCache) return fetch();
+  const { data } = await withRedisCache(
+    redisKeys.population(locationId),
+    REDIS_TTL.population,
+    fetch,
+  );
+  return data;
 }
 
 /**
@@ -90,8 +163,8 @@ export async function getWeatherRange(
     .where(
       and(
         eq(weatherTable.locationId, locationId),
-        gte(weatherTable.timestamp, from),
-        lte(weatherTable.timestamp, to),
+        gte(weatherTable.timestamp, toISTWall(from)),
+        lte(weatherTable.timestamp, toISTWall(to)),
       ),
     )
     .orderBy(asc(weatherTable.timestamp));
@@ -101,8 +174,8 @@ export interface WardEntry {
   locationId: number;
   ward: number | null;
   wardName: string | null;
-  lat: number;
-  long: number;
+  lat: number | null;
+  long: number | null;
   totalPopulation: number | null;
   geometry: unknown;
 }
@@ -112,24 +185,36 @@ export interface WardEntry {
  * the dashboard can render the ward map without a tile server. Ordered by
  * ward number for the selector.
  */
-export async function getWards(db: Db = getDb()): Promise<WardEntry[]> {
-  const rows = await db
-    .select({
-      locationId: locationsTable.id,
-      ward: populationTable.ward,
-      wardName: populationTable.wardName,
-      lat: locationsTable.lat,
-      long: locationsTable.long,
-      totalPopulation: populationTable.totalPopulation,
-      geometry: locationsTable.geometry,
-    })
-    .from(locationsTable)
-    .leftJoin(
-      populationTable,
-      eq(populationTable.locationId, locationsTable.id),
-    )
-    .orderBy(asc(populationTable.ward));
-  return rows.map((r) => ({ ...r, geometry: r.geometry as unknown }));
+export async function getWards(
+  db: Db = getDb(),
+  opts: CacheOpts = {},
+): Promise<WardEntry[]> {
+  const fetch = async () => {
+    const rows = await db
+      .select({
+        locationId: locationsTable.id,
+        ward: populationTable.ward,
+        wardName: populationTable.wardName,
+        lat: locationsTable.lat,
+        long: locationsTable.long,
+        totalPopulation: populationTable.totalPopulation,
+        geometry: locationsTable.geometry,
+      })
+      .from(locationsTable)
+      .leftJoin(
+        populationTable,
+        eq(populationTable.locationId, locationsTable.id),
+      )
+      .orderBy(asc(populationTable.ward));
+    return rows.map((r) => ({ ...r, geometry: r.geometry as unknown }));
+  };
+  if (opts.skipCache) return fetch();
+  const { data } = await withRedisCache(
+    redisKeys.wards,
+    REDIS_TTL.wards,
+    fetch,
+  );
+  return data;
 }
 
 export interface BBox {
@@ -184,7 +269,7 @@ export async function countWeatherSince(
     .where(
       and(
         eq(weatherTable.locationId, locationId),
-        gte(weatherTable.timestamp, since),
+        gte(weatherTable.timestamp, toISTWall(since)),
       ),
     );
   return rows[0]?.count ?? 0;
@@ -213,7 +298,7 @@ export async function getWeatherAtOrBefore(
     .where(
       and(
         eq(weatherTable.locationId, locationId),
-        lte(weatherTable.timestamp, at),
+        lte(weatherTable.timestamp, toISTWall(at)),
       ),
     )
     .orderBy(desc(weatherTable.timestamp))
@@ -222,155 +307,193 @@ export async function getWeatherAtOrBefore(
 }
 
 // ---------------------------------------------------------------------------
-// Snapshots (insert-only history; latest per ward = current rollup)
+// Analysis table (upstream ahvaan-engine output, Redis-cached on website reads)
+// One row per (locationId, forecastDate); `analysis` holds 24 hourly entries.
 // ---------------------------------------------------------------------------
 
-/** Latest snapshot per ward. Empty array when no refresh has run yet. */
-export async function getLatestSnapshots(db: Db = getDb()) {
-  const latest = db
-    .select({
-      locationId: wardSnapshotsTable.locationId,
-      maxAt: sql<Date>`max(${wardSnapshotsTable.computedAt})`.as("maxAt"),
-    })
-    .from(wardSnapshotsTable)
-    .groupBy(wardSnapshotsTable.locationId)
-    .as("latest");
-  return db
-    .select({
-      snapshot: wardSnapshotsTable,
-      ward: populationTable.ward,
-      wardName: populationTable.wardName,
-      totalPopulation: populationTable.totalPopulation,
-      lat: locationsTable.lat,
-      long: locationsTable.long,
-    })
-    .from(wardSnapshotsTable)
-    .innerJoin(
-      latest,
-      and(
-        eq(wardSnapshotsTable.locationId, latest.locationId),
-        eq(wardSnapshotsTable.computedAt, latest.maxAt),
-      ),
-    )
-    .leftJoin(
-      populationTable,
-      eq(populationTable.locationId, wardSnapshotsTable.locationId),
-    )
-    .leftJoin(
-      locationsTable,
-      eq(locationsTable.id, wardSnapshotsTable.locationId),
-    );
-}
-
-/** Snapshot set as of a cutoff (for KPI trend deltas). */
-export async function getSnapshotsBefore(cutoff: Date, db: Db = getDb()) {
-  const latest = db
-    .select({
-      locationId: wardSnapshotsTable.locationId,
-      maxAt: sql<Date>`max(${wardSnapshotsTable.computedAt})`.as("maxAt"),
-    })
-    .from(wardSnapshotsTable)
-    .where(lte(wardSnapshotsTable.computedAt, cutoff))
-    .groupBy(wardSnapshotsTable.locationId)
-    .as("latestBefore");
-  return db
-    .select({ snapshot: wardSnapshotsTable })
-    .from(wardSnapshotsTable)
-    .innerJoin(
-      latest,
-      and(
-        eq(wardSnapshotsTable.locationId, latest.locationId),
-        eq(wardSnapshotsTable.computedAt, latest.maxAt),
-      ),
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Alerts + deliveries
-// ---------------------------------------------------------------------------
-
-export interface ActiveAlertRow {
-  alert: typeof alertsTable.$inferSelect;
-  ward: number | null;
-  wardName: string | null;
-  lat: number | null;
-  long: number | null;
-}
-
-export async function getActiveAlerts(
-  db: Db = getDb(),
-): Promise<ActiveAlertRow[]> {
-  const rows = await db
-    .select({
-      alert: alertsTable,
-      ward: populationTable.ward,
-      wardName: populationTable.wardName,
-      lat: locationsTable.lat,
-      long: locationsTable.long,
-    })
-    .from(alertsTable)
-    .leftJoin(
-      populationTable,
-      eq(populationTable.locationId, alertsTable.wardId),
-    )
-    .leftJoin(locationsTable, eq(locationsTable.id, alertsTable.wardId))
-    .where(eq(alertsTable.status, "active"))
-    .orderBy(desc(alertsTable.riskScore));
-  return rows;
-}
-
-/** Alert/event history for one ward (newest first). Includes resolved. */
-export async function getAlertHistory(
-  wardId: number,
-  limit = 10,
+/** Direct (uncached) fetch — engine updater path. */
+export async function getAnalysisUncached(
+  locationId: number,
+  forecastDate: string,
   db: Db = getDb(),
 ) {
-  return db
-    .select()
-    .from(alertsTable)
-    .where(eq(alertsTable.wardId, wardId))
-    .orderBy(desc(alertsTable.triggeredAt))
-    .limit(limit);
-}
-
-export async function getAlertById(alertId: number, db: Db = getDb()) {
   const rows = await db
     .select()
-    .from(alertsTable)
-    .where(eq(alertsTable.id, alertId))
+    .from(analysisTable)
+    .where(
+      and(
+        eq(analysisTable.locationId, locationId),
+        eq(analysisTable.forecastDate, forecastDate),
+      ),
+    )
     .limit(1);
   return rows[0] ?? null;
 }
 
-export async function createDelivery(
+/**
+ * Website read path: Redis first (`ahvaan:analysis:{id}:{date}`, 6h TTL),
+ * Postgres on miss. Returns the row or null (never throws on miss — the
+ * caller falls back to live engine calculation).
+ */
+export async function getAnalysis(
+  locationId: number,
+  forecastDate: string,
+  db: Db = getDb(),
+  opts: CacheOpts = {},
+) {
+  if (opts.skipCache) return getAnalysisUncached(locationId, forecastDate, db);
+  const { data } = await withRedisCache(
+    redisKeys.analysis(locationId, forecastDate),
+    REDIS_TTL.analysisDay,
+    () => getAnalysisUncached(locationId, forecastDate, db),
+  );
+  return data;
+}
+
+/** Same as getAnalysis but also reports whether Redis served it (for headers). */
+export async function getAnalysisCached(
+  locationId: number,
+  forecastDate: string,
+  db: Db = getDb(),
+) {
+  return withRedisCache(
+    redisKeys.analysis(locationId, forecastDate),
+    REDIS_TTL.analysisDay,
+    () => getAnalysisUncached(locationId, forecastDate, db),
+  );
+}
+
+/** Ordered range of analysis days (inclusive). Redis-cached as one blob. */
+export async function getAnalysisRange(
+  locationId: number,
+  from: string,
+  to: string,
+  db: Db = getDb(),
+  opts: CacheOpts = {},
+) {
+  const fetch = () =>
+    db
+      .select()
+      .from(analysisTable)
+      .where(
+        and(
+          eq(analysisTable.locationId, locationId),
+          gte(analysisTable.forecastDate, from),
+          lte(analysisTable.forecastDate, to),
+        ),
+      )
+      .orderBy(asc(analysisTable.forecastDate));
+  if (opts.skipCache) return fetch();
+  const { data } = await withRedisCache(
+    redisKeys.analysisRange(locationId, from, to),
+    REDIS_TTL.analysisDay,
+    fetch,
+  );
+  return data;
+}
+
+/** Existing forecast dates for a location (engine "missing dates" check). */
+export async function getAnalysisDates(
+  locationId: number,
+  db: Db = getDb(),
+): Promise<Set<string>> {
+  const rows = await db
+    .select({ forecastDate: analysisTable.forecastDate })
+    .from(analysisTable)
+    .where(eq(analysisTable.locationId, locationId));
+  // forecastDate arrives as a Date at runtime (pg parses DATE that way)
+  // or a string after a Redis round-trip — normalize both.
+  return new Set(rows.map((r) => toISODate(r.forecastDate)));
+}
+
+/**
+ * Upsert one analysis day (engine write path). Invalidates the Redis entries
+ * so the website picks up fresh values immediately.
+ */
+export async function storeAnalysis(
+  locationId: number,
+  forecastDate: string,
+  analysis: AnalysisHourEntry[],
+  db: Db = getDb(),
+) {
+  if (!Number.isInteger(locationId)) {
+    throw new Error("locationId must be an integer.");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(forecastDate)) {
+    throw new Error("forecastDate must be in YYYY-MM-DD format.");
+  }
+  if (!Array.isArray(analysis)) throw new Error("analysis must be an array.");
+  const rows = await db
+    .insert(analysisTable)
+    .values({ locationId, forecastDate, analysis })
+    .onConflictDoUpdate({
+      target: [analysisTable.locationId, analysisTable.forecastDate],
+      set: { analysis },
+    })
+    .returning();
+  await invalidateAnalysis(locationId, forecastDate);
+  await invalidateAnalysis(locationId); // range blobs
+  return rows[0];
+}
+
+/** Engine housekeeping: drop days before `cutoffDate` (YYYY-MM-DD). */
+export async function deleteAnalysisBefore(
+  cutoffDate: string,
+  db: Db = getDb(),
+) {
+  return db
+    .delete(analysisTable)
+    .where(lt(analysisTable.forecastDate, cutoffDate))
+    .returning({ id: analysisTable.id });
+}
+
+/** Active locations for the engine sweep (NULL status = legacy active). */
+export async function getActiveLocations(db: Db = getDb()) {
+  return db
+    .select()
+    .from(locationsTable)
+    .where(
+      or(eq(locationsTable.status, "active"), isNull(locationsTable.status)),
+    )
+    .orderBy(asc(locationsTable.id));
+}
+
+// ---------------------------------------------------------------------------
+// Ingestion audit log (upstream avhaan-db `data_ingestion_errors`)
+// ---------------------------------------------------------------------------
+
+export async function logIngestionError(
   input: {
-    alertId?: number | null;
-    recipientPhone?: string | null;
-    messageText?: string | null;
-    sentBy?: string | null;
-    status?: string | null;
+    district: string;
+    ward: number;
+    source: string;
+    errorType: string;
+    missingFields?: unknown;
+    errorMessage?: string | null;
   },
   db: Db = getDb(),
 ) {
   const rows = await db
-    .insert(alertDeliveriesTable)
+    .insert(dataIngestionErrorsTable)
     .values({
-      alertId: input.alertId ?? null,
-      recipientPhone: input.recipientPhone ?? null,
-      messageText: input.messageText ?? null,
-      sentBy: input.sentBy ?? null,
-      channel: "whatsapp",
-      status: input.status ?? "initiated",
+      district: input.district,
+      ward: input.ward,
+      source: input.source,
+      errorType: input.errorType,
+      missingFields: (input.missingFields ?? null) as unknown as typeof dataIngestionErrorsTable.$inferInsert["missingFields"],
+      errorMessage: input.errorMessage ?? null,
     })
     .returning();
   return rows[0];
 }
 
-/** Broadcast history for one alert (newest first). Powers "View Broadcast History". */
-export async function getDeliveries(alertId: number, db: Db = getDb()) {
+export async function getRecentIngestionErrors(
+  limit = 50,
+  db: Db = getDb(),
+) {
   return db
     .select()
-    .from(alertDeliveriesTable)
-    .where(eq(alertDeliveriesTable.alertId, alertId))
-    .orderBy(desc(alertDeliveriesTable.sentAt));
+    .from(dataIngestionErrorsTable)
+    .orderBy(desc(dataIngestionErrorsTable.createdAt))
+    .limit(limit);
 }

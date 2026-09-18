@@ -21,7 +21,8 @@ function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
     <>
       {NAV.map((n) => {
         const active =
-          pathname === n.href || (n.href !== "/" && pathname.startsWith(n.href));
+          pathname === n.href ||
+          (n.href !== "/" && pathname.startsWith(n.href));
         return (
           <Link
             key={n.href}
@@ -82,7 +83,7 @@ export function LeftNav() {
             className="flex items-center gap-2"
           >
             <img
-              src="/logo.svg"
+              src="/logo.png"
               alt="Ahvaan logo"
               width={32}
               height={32}

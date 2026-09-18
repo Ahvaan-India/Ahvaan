@@ -30,13 +30,19 @@ export function isInKolkata(lat: number, lon: number): boolean {
 
 /**
  * IANA timezone for a ward/location. Kolkata wards → Asia/Kolkata.
- * Fallback for out-of-area points: nearest whole-hour Etc/GMT zone from
- * longitude (documented approximation, flagged in UI via `isEstimated`).
+ * Null coords (live `locations` allows them) fall back to Kolkata and are
+ * flagged estimated — the deployment is Kolkata-only, so this is a safe
+ * default, never a silent guess. Fallback for out-of-area points: nearest
+ * whole-hour Etc/GMT zone from longitude (documented approximation, flagged
+ * in UI via `isEstimated`).
  */
 export function timezoneForLocation(
-  lat: number,
-  lon: number,
+  lat: number | null,
+  lon: number | null,
 ): { timeZone: string; isEstimated: boolean } {
+  if (lat === null || lon === null) {
+    return { timeZone: KOLKATA_TIMEZONE, isEstimated: true };
+  }
   if (isInKolkata(lat, lon)) {
     return { timeZone: KOLKATA_TIMEZONE, isEstimated: false };
   }
@@ -46,7 +52,10 @@ export function timezoneForLocation(
 }
 
 /** Thin wrapper: ward rows carry lat/long, so ward tz == location tz. */
-export function timezoneForWard(ward: { lat: number; long: number }): {
+export function timezoneForWard(ward: {
+  lat: number | null;
+  long: number | null;
+}): {
   timeZone: string;
   isEstimated: boolean;
 } {

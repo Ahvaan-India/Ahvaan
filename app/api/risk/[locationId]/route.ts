@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  getAnalysis,
   getLatestPopulation,
   getLocationById,
   getWeatherWindow,
@@ -7,6 +8,8 @@ import {
 import { DataGapError, LocationNotFoundError } from "@/lib/db/errors";
 import { buildRiskResponse } from "@/lib/heatshield/service";
 import { WEATHER_WINDOW_HOURS } from "@/lib/heatshield/config";
+import { istDateString, summarizeDayAnalysis, toISODate } from "@/lib/analysis";
+import type { AnalysisHourEntry } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,9 +52,34 @@ export async function GET(_req: Request, { params }: RouteParams) {
 
     const payload = buildRiskResponse({ location, weatherRows, population });
 
-    return NextResponse.json(payload, {
+    // Additive enrichment from the precomputed `analysis` table (ahvaan-engine
+    // output, Redis-cached). Never blocks the live risk response: on miss the
+    // endpoint behaves exactly as before.
+    let engine: Record<string, unknown> | null = null;
+    let analysisHit = false;
+    try {
+      const today = istDateString();
+      const row = await getAnalysis(locationId, today);
+      if (row) {
+        analysisHit = true;
+        const entries = row.analysis as unknown as AnalysisHourEntry[];
+        engine = {
+          source: "precomputed",
+          forecastDate: toISODate(row.forecastDate),
+          hours: entries.length,
+          summary: summarizeDayAnalysis(entries),
+        };
+      }
+    } catch {
+      // enrichment is best-effort; live score above is authoritative
+    }
+
+    return NextResponse.json({ ...payload, engine }, {
       status: 200,
-      headers: { "Cache-Control": "no-store" },
+      headers: {
+        "Cache-Control": "no-store",
+        "X-Analysis": analysisHit ? "HIT" : "MISS",
+      },
     });
   } catch (err) {
     if (err instanceof LocationNotFoundError) {

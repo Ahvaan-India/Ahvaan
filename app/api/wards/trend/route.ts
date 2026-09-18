@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
-import { wardSnapshotsTable } from "@/lib/db/schema";
-import { sql } from "drizzle-orm";
+import { getBoard } from "@/lib/board";
+import { REDIS_TTL, withRedisCache } from "@/lib/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/wards/trend?days=7  city-wide daily mean risk (from snapshots).
- * Groups snapshots by local date (Asia/Kolkata) and averages risk.
- * Returns up to `days` most recent dates, oldest→newest.
+ * GET /api/wards/trend?days=7  city-wide daily mean risk (from the shared
+ * city board — no snapshots table). Returns up to `days` most recent
+ * dates, oldest→newest.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -18,41 +17,29 @@ export async function GET(req: Request) {
     30,
   );
   try {
-    const db = getDb();
-    // Use DB date truncation in IST: convert computedAt to Asia/Kolkata date
-    const rows = await db.execute<{
-      date: string;
-      avgRisk: number;
-      count: number;
-    }>(
-      sql`
-      SELECT
-        (("computedAt" AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')::date)::text AS date,
-        AVG(risk)::float AS "avgRisk",
-        COUNT(*)::int AS count
-      FROM ${wardSnapshotsTable}
-      GROUP BY 1
-      ORDER BY 1 DESC
-      LIMIT ${sql.raw(String(days))}
-    ` as unknown as string,
-    );
-
-    // drizzle execute returns { rows } shape depending on driver; handle both
-    const raw: Array<{ date: string; avgRisk: number; count: number }> =
-      (rows as unknown as { rows?: typeof rows })?.rows ??
-      (rows as unknown as Array<{
-        date: string;
-        avgRisk: number;
-        count: number;
-      }>);
-    const sorted = [...(Array.isArray(raw) ? raw : [])].sort((a, b) =>
-      a.date < b.date ? -1 : 1,
+    const { data: sorted, cached } = await withRedisCache(
+      `ahvaan:trend:${days}`,
+      REDIS_TTL.trend,
+      async () => {
+        const { data: board } = await getBoard(days);
+        return board.dates.slice(-days).map((date) => {
+          const pts = board.wards.flatMap((w) =>
+            w.days.filter((d) => d.date === date),
+          );
+          const avgRisk =
+            pts.length > 0
+              ? pts.reduce((a, d) => a + d.risk, 0) / pts.length
+              : 0;
+          return { date, avgRisk, count: pts.length };
+        });
+      },
     );
     return NextResponse.json(
       { days: sorted },
       {
         headers: {
           "Cache-Control": "public, s-maxage=300, stale-while-revalidate=120",
+          "X-Cache": cached ? "HIT" : "MISS",
         },
       },
     );

@@ -429,6 +429,13 @@ export function KolkataMap({
     return out;
   }, [tileZoom, bounds, vbX, vbY, vbW, vbH, darkTiles]);
 
+  // Belt-and-braces: whenever the parent clears the hover (page-level
+  // mouse-leave, overlay enter), drop the tooltip too — never show a popup
+  // for a ward the pointer is no longer on.
+  useEffect(() => {
+    if (hoveredId === null) setTip(null);
+  }, [hoveredId]);
+
   const onMove = useCallback(
     (e: React.MouseEvent, cell: MapWard) => {
       if (drag) return; // suppress tooltip while dragging
@@ -471,6 +478,21 @@ export function KolkataMap({
     [],
   );
 
+  // Map gestures (drag/pinch/wheel/double-click) must only start on the
+  // map + layout itself — never on overlay controls (zoom stack, legend).
+  // Control containers carry `data-map-control`; anything inside them is
+  // left alone so buttons stay clickable and drags starting there don't pan.
+  const isControlTarget = (e: { target: unknown }): boolean => {
+    const t = e.target as unknown as
+      | { closest?: (sel: string) => unknown }
+      | null;
+    try {
+      return Boolean(t && typeof t.closest === "function" && t.closest("[data-map-control]"));
+    } catch {
+      return false;
+    }
+  };
+
   // Native non-passive wheel listener: React attaches wheel passively at the
   // root, so e.preventDefault() in onWheel is ignored and the page scrolls
   // instead of zooming. This keeps scroll-to-zoom (and trackpad pinch,
@@ -479,6 +501,7 @@ export function KolkataMap({
     const el = wrapRef.current;
     if (!el) return;
     const onWheelNative = (e: WheelEvent) => {
+      if (isControlTarget(e)) return;
       e.preventDefault();
       const step = e.ctrlKey ? 0.01 : 0.0025;
       const nz = viewRef.current.zoom * (1 - e.deltaY * step);
@@ -489,6 +512,7 @@ export function KolkataMap({
   }, [zoomAtPoint]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (isControlTarget(e)) return;
     if (e.pointerType !== "mouse") setTip(null);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     downRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
@@ -647,7 +671,8 @@ export function KolkataMap({
       }}
       onPointerDown={handlePointerDown}
       onDoubleClick={(e) => {
-        // Desktop double-click to zoom in, anchored at cursor
+        // Desktop double-click to zoom in, anchored at cursor (not on controls)
+        if (isControlTarget(e)) return;
         zoomAtPoint(e.clientX, e.clientY, zoom + 1);
       }}
       style={{
@@ -824,7 +849,14 @@ export function KolkataMap({
       </div>
 
       {/* Zoom controls  Google Maps style vertical stack (above hover popup) */}
-      <div className="absolute bottom-4 right-3 z-20 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform">
+      <div
+        data-map-control
+        onMouseEnter={() => {
+          onHover(null);
+          setTip(null);
+        }}
+        className="absolute bottom-4 right-3 z-20 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform"
+      >
         <button
           onClick={() => {
             const rect = wrapRef.current?.getBoundingClientRect();
@@ -884,7 +916,7 @@ export function KolkataMap({
       </div>
 
       {/* Legend  fixed categories, not decimal-sensitive */}
-      <div className="absolute bottom-4 left-3 flex items-center gap-1.5 rounded-full border bg-card/90 px-3 py-1.5 shadow-lg backdrop-blur">
+      <div data-map-control className="absolute bottom-4 left-3 flex items-center gap-1.5 rounded-full border bg-card/90 px-3 py-1.5 shadow-lg backdrop-blur">
         <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
           {layer === "risk"
             ? "Risk"

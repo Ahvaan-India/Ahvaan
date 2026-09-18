@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import useSWR from "swr";
 import {
   LineChart,
@@ -42,6 +43,8 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Thermometer,
+  Clock,
 } from "lucide-react";
 
 const jsonFetch = (u: string) =>
@@ -77,6 +80,10 @@ export function WardAnalysis({
       wbgtMax: number;
     }>;
   }>(wardId ? `/api/forecast/${wardId}?days=5` : null, jsonFetch);
+  const { data: showcase } = useSWR<any>(
+    wardId ? `/api/showcase/${wardId}` : null,
+    jsonFetch,
+  );
 
   if (!wardId) {
     return (
@@ -142,6 +149,41 @@ export function WardAnalysis({
       ? latest.risk * 100 - cityMean
       : null;
 
+  // ---- Precomputed engine (showcase): hourly curves + peak analytics ----
+  const engineDays: any[] = showcase?.days ?? [];
+  const todayEngine = engineDays[0] ?? null;
+  const todayHourly: any[] = todayEngine?.hourly ?? [];
+  const enginePeaks = useMemo(() => {
+    let wbgt = { v: -Infinity as number, when: "" };
+    let hi = { v: -Infinity as number, when: "" };
+    let htsi = { v: -Infinity as number, when: "" };
+    let hotHours = 0;
+    for (const d of engineDays) {
+      for (const h of d.hourly ?? []) {
+        const when = `${d.forecastDate.slice(5)} ${h.hour.slice(0, 5)}`;
+        if (typeof h.wbgt === "number" && h.wbgt > wbgt.v) wbgt = { v: h.wbgt, when };
+        if (typeof h.hi === "number" && h.hi > hi.v) hi = { v: h.hi, when };
+        if (typeof h.htsi === "number" && h.htsi > htsi.v) htsi = { v: h.htsi, when };
+        if (typeof h.temp === "number" && h.temp >= 35) hotHours += 1;
+      }
+    }
+    return {
+      wbgt: wbgt.v > -Infinity ? wbgt : null,
+      hi: hi.v > -Infinity ? hi : null,
+      htsi: htsi.v > -Infinity ? htsi : null,
+      hotHours,
+    };
+  }, [engineDays]);
+  const sixDayBars = engineDays.map((d: any) => ({
+    date: d.forecastDate.slice(5),
+    wbgt: d.summary?.wbgtMax ?? null,
+    hi: d.summary?.heatIndexMax ?? null,
+    htsi: d.summary?.htsiMax ?? null,
+  }));
+  const hourlyDom = domainRaw(
+    todayHourly.flatMap((h: any) => [h.temp, h.wbgt, h.hi].filter((v: any) => typeof v === "number")),
+  );
+
   return (
     <div className="space-y-6">
       <div>
@@ -149,7 +191,7 @@ export function WardAnalysis({
           {getWardDisplayName(ward, null)} - Deep Analysis
         </h3>
         <p className="text-sm text-muted-foreground">
-          {hist.length} snapshots · {fc.length} forecast days · {latest ? `latest risk ${(latest.risk * 100).toFixed(1)}/100` : "no history yet"} · tap another ward to switch
+          {hist.length} model days · {fc.length} forecast days · {engineDays.length > 0 ? `${engineDays.reduce((s: number, d: any) => s + (d.hours ?? 0), 0)} engine hours · ` : ""}{latest ? `latest risk ${(latest.risk * 100).toFixed(1)}/100` : "no history yet"} · tap another ward to switch
         </p>
       </div>
 
@@ -535,6 +577,100 @@ export function WardAnalysis({
           </CardContent>
         </Card>
       </div>
+
+      {/* Precomputed engine: peak tiles from 6 days of hourly values */}
+      {engineDays.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <SubCard
+            icon={Flame}
+            label="Peak WBGT · 6d"
+            value={enginePeaks.wbgt ? enginePeaks.wbgt.v.toFixed(1) : "-"}
+            unit="°C"
+            qualifier={enginePeaks.wbgt ? enginePeaks.wbgt.when : null}
+            qualifierTone="high"
+          />
+          <SubCard
+            icon={Thermometer}
+            label="Peak Heat Idx · 6d"
+            value={enginePeaks.hi ? enginePeaks.hi.v.toFixed(1) : "-"}
+            unit="°C"
+            qualifier={enginePeaks.hi ? enginePeaks.hi.when : null}
+            qualifierTone="high"
+          />
+          <SubCard
+            icon={Activity}
+            label="Peak HTSI · 6d"
+            value={enginePeaks.htsi ? enginePeaks.htsi.v.toFixed(0) : "-"}
+            unit="/100"
+            qualifier={enginePeaks.htsi ? enginePeaks.htsi.when : "predates HTSI rows"}
+            qualifierTone={enginePeaks.htsi ? "extreme" : "moderate"}
+          />
+          <SubCard
+            icon={Clock}
+            label="Hours ≥35°C · 6d"
+            value={String(enginePeaks.hotHours)}
+            unit="hrs"
+            qualifier={enginePeaks.hotHours >= 24 ? "Prolonged heat" : enginePeaks.hotHours > 0 ? "Heat spells" : "None"}
+            qualifierTone={enginePeaks.hotHours >= 24 ? "extreme" : enginePeaks.hotHours > 0 ? "high" : "low"}
+          />
+        </div>
+      )}
+
+      {/* Precomputed engine: today's hourly curves (weather-app style) */}
+      {todayHourly.length > 0 && (
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Today, hour by hour — temp, WBGT, heat index</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Precomputed engine values for {todayEngine?.forecastDate} (IST). HTSI rows predate this ward&apos;s engine run where missing.
+            </p>
+          </CardHeader>
+          <CardContent className="h-[280px] w-full min-w-0 p-2 sm:p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart
+                data={todayHourly.map((h: any) => ({
+                  label: h.hour.slice(0, 5),
+                  temp: h.temp,
+                  wbgt: h.wbgt,
+                  hi: h.hi,
+                }))}
+                margin={{ left: 8, right: 12, top: 8, bottom: 8 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis dataKey="label" tick={AXIS_TICK} interval={2} minTickGap={16} height={48} label={xLabel("Hour (IST)")} />
+                <YAxis domain={hourlyDom} tick={AXIS_TICK} tickCount={5} width={48} label={yLabel("°C")} />
+                <Tooltip animationDuration={0} content={<ChartTooltip />} />
+                <Legend />
+                <Line type="monotone" dataKey="temp" name="Temp °C" dot={false} stroke="#f97316" strokeWidth={2} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="wbgt" name="WBGT °C" dot={false} stroke="#0ea5e9" strokeWidth={2} isAnimationActive={false} connectNulls />
+                <Line type="monotone" dataKey="hi" name="Heat idx °C" dot={false} stroke="#ef4444" strokeWidth={2} strokeDasharray="5 3" isAnimationActive={false} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Precomputed engine: 6-day daily peaks */}
+      {sixDayBars.length > 1 && (
+        <Card className="overflow-hidden">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Daily peaks — WBGT vs heat index (6 days)</CardTitle>
+          </CardHeader>
+          <CardContent className="h-[260px] w-full min-w-0 p-2 sm:p-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={sixDayBars}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                <XAxis dataKey="date" tick={AXIS_TICK} interval="preserveStartEnd" height={48} label={xLabel("Date")} />
+                <YAxis domain={domainRaw(sixDayBars.flatMap((d: any) => [d.wbgt, d.hi]))} tick={AXIS_TICK} tickCount={5} width={48} label={yLabel("°C")} />
+                <Tooltip animationDuration={0} cursor={{ fill: "hsl(var(--muted))", fillOpacity: 0.35 }} content={<ChartTooltip unit="°C" />} />
+                <Legend />
+                <Bar dataKey="wbgt" name="WBGT max °C" fill="#0ea5e9" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+                <Bar dataKey="hi" name="Heat idx max °C" fill="#ef4444" radius={[6, 6, 0, 0]} isAnimationActive={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
-import { getDb } from "@/lib/db";
-import { wardSnapshotsTable } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { getBoard } from "@/lib/board";
+import { REDIS_TTL, withRedisCache } from "@/lib/redis";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * GET /api/wards/[wardId]/trend?days=7  per-ward risk history + 24h hourly thermal.
- * History from snapshots (one point per batch), hourly from weather-derived thermal would be heavier,
- * so for now we return snapshot history; hourly can be added via weather range if needed.
+ * GET /api/wards/[wardId]/trend?days=7  per-ward risk history (from the
+ * shared city board — no snapshots table). One point per available IST
+ * date (weather window permitting), oldest→newest, same shape as before.
  */
 export async function GET(
   req: Request,
@@ -26,43 +25,36 @@ export async function GET(
     30,
   );
   try {
-    const db = getDb();
-    const rows = await db
-      .select({
-        computedAt: wardSnapshotsTable.computedAt,
-        risk: wardSnapshotsTable.risk,
-        category: wardSnapshotsTable.category,
-        thermal: wardSnapshotsTable.thermal,
-        wbgt: wardSnapshotsTable.wbgt,
-      })
-      .from(wardSnapshotsTable)
-      .where(eq(wardSnapshotsTable.locationId, wardId))
-      .orderBy(wardSnapshotsTable.computedAt);
-
-    // Keep last `days` distinct dates (if multiple batches per day, keep latest per day)
-    const byDate = new Map<string, (typeof rows)[number]>();
-    for (const r of rows) {
-      const d = new Date(r.computedAt as unknown as string)
-        .toISOString()
-        .slice(0, 10);
-      byDate.set(d, r); // last per day wins (ascending order)
+    const { data: history, cached } = await withRedisCache(
+      `ahvaan:ward-trend:${wardId}:${days}`,
+      REDIS_TTL.trend,
+      async () => {
+        const { data: board } = await getBoard(days);
+        const ward = board.wards.find((w) => w.locationId === wardId);
+        if (!ward) return null;
+        return ward.days.slice(-days).map((d) => ({
+          date: d.date,
+          risk: d.risk,
+          category: d.category,
+          thermal: d.thermal,
+          wbgt: d.wbgt,
+          computedAt: board.computedAt,
+        }));
+      },
+    );
+    if (!history) {
+      return NextResponse.json(
+        { error: "Ward not found", wardId },
+        { status: 404 },
+      );
     }
-    const history = [...byDate.values()].slice(-days).map((r) => ({
-      date: new Date(r.computedAt as unknown as string)
-        .toISOString()
-        .slice(0, 10),
-      risk: r.risk,
-      category: r.category,
-      thermal: r.thermal,
-      wbgt: r.wbgt,
-      computedAt: r.computedAt,
-    }));
 
     return NextResponse.json(
       { wardId, history },
       {
         headers: {
           "Cache-Control": "public, s-maxage=300, stale-while-revalidate=120",
+          "X-Cache": cached ? "HIT" : "MISS",
         },
       },
     );

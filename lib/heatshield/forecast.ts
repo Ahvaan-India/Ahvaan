@@ -7,6 +7,7 @@ import { computeMortalityIndex } from "./mortality";
 import { computeUTCI, estimateTmrt } from "./utci";
 import { NIGHTTIME_RECOVERY } from "./config";
 import { localDayKey } from "../geo/timezone";
+import { parseISTWall } from "../analysis";
 import type { Location, PopulationRow, WeatherRow } from "../db/schema";
 
 export interface ForecastDay {
@@ -76,7 +77,7 @@ export function computeForecastDays({
       // keep unavailable
     }
     const { score } = computeThermalStress({ wbgt, heatIndex: hi, utci, utciAvailable });
-    hours.push({ t: new Date(r.timestamp), ta: r.temperature2m, score, wbgt, hi });
+    hours.push({ t: parseISTWall(r.timestamp), ta: r.temperature2m, score, wbgt, hi });
   }
 
   const exposure = computeExposureScore(population, location.geometry);

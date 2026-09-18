@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import {
-  getAlertHistory,
   getLatestPopulation,
   getLatestWeather,
   getLocationById,
@@ -21,10 +20,12 @@ import {
   settlementDensity,
 } from "@/lib/console";
 import { timezoneForLocation } from "@/lib/geo/timezone";
+import { parseISTWall, toISTWall } from "@/lib/analysis";
+import { REDIS_TTL, withRedisCache } from "@/lib/redis";
 import { VULNERABILITY_DEFAULTS } from "@/lib/heatshield/config";
 import { getDb } from "@/lib/db";
-import { wardSnapshotsTable, weatherTable } from "@/lib/db/schema";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { weatherTable } from "@/lib/db/schema";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,7 +76,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
     const priorWx = latestWx?.timestamp
       ? await getWeatherAtOrBefore(
           wardId,
-          new Date(new Date(latestWx.timestamp).getTime() - 24 * 3_600_000),
+          new Date(parseISTWall(latestWx.timestamp).getTime() - 24 * 3_600_000),
         )
       : null;
 
@@ -97,7 +98,7 @@ export async function GET(_req: Request, { params }: RouteParams) {
         .where(
           and(
             eq(weatherTable.locationId, wardId),
-            gte(weatherTable.timestamp, since24h),
+            gte(weatherTable.timestamp, toISTWall(since24h)),
           ),
         );
       const maxVal = maxRows[0]?.maxSolar;
@@ -116,8 +117,8 @@ export async function GET(_req: Request, { params }: RouteParams) {
         .where(
           and(
             eq(weatherTable.locationId, wardId),
-            gte(weatherTable.timestamp, since48h),
-            lte(weatherTable.timestamp, until24h),
+            gte(weatherTable.timestamp, toISTWall(since48h)),
+            lte(weatherTable.timestamp, toISTWall(until24h)),
           ),
         );
       const priorMaxVal = priorMaxRows[0]?.maxSolar;
@@ -140,7 +141,9 @@ export async function GET(_req: Request, { params }: RouteParams) {
       humidity,
       wind,
       solar,
-      timestamp: latestWx?.timestamp ?? null,
+      timestamp: latestWx?.timestamp
+        ? parseISTWall(latestWx.timestamp).toISOString()
+        : null,
       qualifiers: {
         temp: temp !== null ? qualifyTemp(temp) : null,
         humidity: humidity !== null ? qualifyHumidity(humidity) : null,
@@ -172,15 +175,75 @@ export async function GET(_req: Request, { params }: RouteParams) {
       flags: vuln.flags,
     };
 
-    const snapRows = await db
-      .select()
-      .from(wardSnapshotsTable)
-      .where(eq(wardSnapshotsTable.locationId, wardId))
-      .orderBy(desc(wardSnapshotsTable.computedAt))
-      .limit(1);
-    const snap = snapRows[0] ?? null;
-
-    const history = await getAlertHistory(wardId, 10);
+    // Current risk: shared city board (no snapshots table), falling back to
+    // a live single-ward computation when this ward missed the board.
+    const { getBoard } = await import("@/lib/board");
+    const { data: board } = await getBoard(7);
+    const boardWard = board.wards.find((w) => w.locationId === wardId);
+    let risk: {
+      value: number;
+      category: string;
+      displayCategory: string;
+      thermal: number;
+      exposure: number;
+      vulnerability: number;
+      persistence: number;
+      recovery: number;
+      wbgt: number;
+      heatIndex: number;
+      utci: number | null;
+      confidence: number;
+      computedAt: string;
+    } | null = null;
+    if (boardWard?.latest) {
+      const r = boardWard.latest;
+      risk = {
+        value: r.compositeRisk.value,
+        category: r.compositeRisk.category,
+        displayCategory: displayCategory(r.compositeRisk.category),
+        thermal: r.scores.thermalStress,
+        exposure: r.scores.exposure,
+        vulnerability: r.scores.vulnerability,
+        persistence: r.scores.persistence,
+        recovery: r.scores.nighttimeRecovery,
+        wbgt: r.indicators.wbgt,
+        heatIndex: r.indicators.heatIndex,
+        utci: r.indicators.utci,
+        confidence: r.confidence.score,
+        computedAt: r.computedAt,
+      };
+    } else {
+      try {
+        const { getWeatherWindow } = await import("@/lib/db/queries");
+        const { buildRiskResponse } = await import("@/lib/heatshield/service");
+        const [weatherRows, pop] = await Promise.all([
+          getWeatherWindow(wardId),
+          Promise.resolve(population),
+        ]);
+        const r = buildRiskResponse({
+          location,
+          weatherRows,
+          population: pop,
+        });
+        risk = {
+          value: r.compositeRisk.value,
+          category: r.compositeRisk.category,
+          displayCategory: displayCategory(r.compositeRisk.category),
+          thermal: r.scores.thermalStress,
+          exposure: r.scores.exposure,
+          vulnerability: r.scores.vulnerability,
+          persistence: r.scores.persistence,
+          recovery: r.scores.nighttimeRecovery,
+          wbgt: r.indicators.wbgt,
+          heatIndex: r.indicators.heatIndex,
+          utci: r.indicators.utci,
+          confidence: r.confidence.score,
+          computedAt: r.computedAt,
+        };
+      } catch {
+        risk = null;
+      }
+    }
 
     // Reuse the shared forecast engine for the trajectory status line.
     let trajectory: { date: string; risk: number; category: string }[] = [];
@@ -203,50 +266,32 @@ export async function GET(_req: Request, { params }: RouteParams) {
       trajectory = [];
     }
 
-    return NextResponse.json(
-      {
+    // Whole-response cache (60s): the panel re-requests this on every map
+    // hover/selection. Only successful payloads store.
+    const { data: payload, cached } = await withRedisCache(
+      `ahvaan:telemetry:${wardId}`,
+      REDIS_TTL.telemetry,
+      async () => ({
         wardId,
         ward: population.ward ?? null,
         wardName: population.wardName ?? null,
         lat: location.lat,
         long: location.long,
         timezone: timeZone,
-        risk: snap
-          ? {
-              value: snap.risk,
-              category: snap.category,
-              displayCategory: displayCategory(snap.category),
-              thermal: snap.thermal,
-              exposure: snap.exposure,
-              vulnerability: snap.vulnerability,
-              persistence: snap.persistence,
-              recovery: snap.recovery,
-              wbgt: snap.wbgt,
-              heatIndex: snap.heatIndex,
-              utci: (snap as unknown as { utci?: number | null }).utci ?? null,
-              confidence: snap.confidence,
-              computedAt: snap.computedAt,
-            }
-          : null,
+        risk,
         macro,
         demographics,
         trajectory,
-        history: history.map((h) => ({
-          id: h.id,
-          severity: h.severity,
-          riskScore: h.riskScore,
-          peakWindowStart: h.peakWindowStart,
-          peakWindowEnd: h.peakWindowEnd,
-          advisoryText: h.advisoryText,
-          triggeredAt: h.triggeredAt,
-          status: h.status,
-        })),
-      },
-      {
-        status: 200,
-        headers: { "Cache-Control": "no-store" },
-      },
+        // No alert/event history: alerts are evaluated client-side
+        // (lib/alerts.ts) and nothing is saved to the DB.
+        history: [],
+      }),
     );
+
+    return NextResponse.json(payload, {
+      status: 200,
+      headers: { "Cache-Control": "no-store", "X-Cache": cached ? "HIT" : "MISS" },
+    });
   } catch (err) {
     if (err instanceof LocationNotFoundError) {
       return NextResponse.json(

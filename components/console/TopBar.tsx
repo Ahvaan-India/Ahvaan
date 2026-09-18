@@ -75,11 +75,24 @@ export function TopBar({
           >
             {navOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
-          <Link href="/maps" className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80">
-            <img src="/logo.svg" alt="Ahvaan logo" width={30} height={30} className="h-7 w-7 rounded-lg shadow-sm sm:h-8 sm:w-8" />
+          <Link
+            href="/maps"
+            className="flex shrink-0 items-center gap-2 transition-opacity hover:opacity-80"
+          >
+            <img
+              src="/logo.png"
+              alt="Ahvaan logo"
+              width={30}
+              height={30}
+              className="h-7 w-7 rounded-lg shadow-sm sm:h-8 sm:w-8"
+            />
             <span className="hidden flex-col leading-none min-[400px]:flex">
-              <span className="text-[13px] font-extrabold tracking-tight sm:text-[14px]">Ahvaan</span>
-              <span className="text-[9px] font-semibold tracking-widest text-muted-foreground sm:text-[10px]">KOLKATA</span>
+              <span className="text-[13px] font-extrabold tracking-tight sm:text-[14px]">
+                Ahvaan
+              </span>
+              <span className="text-[9px] font-semibold tracking-widest text-muted-foreground sm:text-[10px]">
+                KOLKATA
+              </span>
             </span>
           </Link>
         </div>
@@ -124,8 +137,14 @@ export function TopBar({
                           {w.ward ?? "·"}
                         </span>
                         <span className="min-w-0">
-                          <span className="block text-sm font-semibold leading-none">{getWardDisplayName(w.ward, w.wardName)}</span>
-                          {loc && <span className="block text-xs text-muted-foreground">{loc}</span>}
+                          <span className="block text-sm font-semibold leading-none">
+                            {getWardDisplayName(w.ward, w.wardName)}
+                          </span>
+                          {loc && (
+                            <span className="block text-xs text-muted-foreground">
+                              {loc}
+                            </span>
+                          )}
                         </span>
                       </button>
                     );
@@ -141,29 +160,6 @@ export function TopBar({
         {/* RIGHT SECTION: pinned right on all screens (ml-auto covers
             mobile, where the centre search is hidden and adds no flex) */}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <div className="hidden items-center gap-2 xl:flex">
-            <span className="rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white">
-              {watchLabel}
-            </span>
-            {syncedAt && (
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
-                <span className="tabular-nums hidden lg:inline">
-                  {new Date(syncedAt).toLocaleTimeString("en-IN", {
-                    timeZone: timezone,
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
-                </span>
-                {syncDetail && (
-                  <span className="tabular-nums text-muted-foreground/70">
-                    · {syncDetail}
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
-
           <Button
             onClick={onSendAlert}
             size="sm"
@@ -189,7 +185,11 @@ export function TopBar({
               className="h-10 w-full rounded-xl border bg-muted/40 py-2 pl-9 pr-9 text-sm placeholder:text-muted-foreground focus:bg-card focus:outline-none focus:ring-2 focus:ring-primary/20"
             />
             {searchQuery ? (
-              <button onClick={() => onSearchChange("")} className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full hover:bg-muted" aria-label="Clear search">
+              <button
+                onClick={() => onSearchChange("")}
+                className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full hover:bg-muted"
+                aria-label="Clear search"
+              >
                 <X className="h-3.5 w-3.5" />
               </button>
             ) : null}
@@ -198,9 +198,28 @@ export function TopBar({
                 {suggestions.map((w) => {
                   const loc = getWardLocality(w.ward);
                   return (
-                    <button key={w.wardId} onMouseDown={(e) => { e.preventDefault(); onSelectWard?.(w.wardId); setFocused(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent">
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">{w.ward ?? "·"}</span>
-                      <span className="min-w-0"><span className="block text-sm font-semibold leading-none">{getWardDisplayName(w.ward, w.wardName)}</span>{loc && <span className="block text-xs text-muted-foreground">{loc}</span>}</span>
+                    <button
+                      key={w.wardId}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        onSelectWard?.(w.wardId);
+                        setFocused(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-accent"
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
+                        {w.ward ?? "·"}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold leading-none">
+                          {getWardDisplayName(w.ward, w.wardName)}
+                        </span>
+                        {loc && (
+                          <span className="block text-xs text-muted-foreground">
+                            {loc}
+                          </span>
+                        )}
+                      </span>
                     </button>
                   );
                 })}
