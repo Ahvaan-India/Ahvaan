@@ -1,27 +1,34 @@
 # Ahvaan · Urban Heat Resilience Platform
 
-Ahvaan is an enterprise-grade, ward-level heat risk decision-support platform designed for **Kolkata Municipality (144 KMC Wards)**. The platform provides real-time microclimate surveillance, thermal stress modeling, population exposure analytics, and automated municipal heat advisory dispatch.
+Ahvaan is an enterprise-grade, ward-level heat risk decision-support platform designed for **Kolkata Municipality (144 KMC Wards)**. The platform provides real-time microclimate surveillance, thermal stress modeling (HTSI, WBGT, UTCI, Heat Index), population exposure analytics, index accuracy comparison, and automated municipal heat advisory dispatch.
 
 ---
 
 ## 🌟 What We Built & Core Platform Features
 
 1. **Interactive 144-Ward Spatial Heat Map (`/maps`)**:
-   - Full vector-mapped choropleth rendering Kolkata's 144 KMC wards.
-   - **Real-Time Hover Telemetry**: Hovering over any ward dynamically updates the right-rail Info Bar with real-time **Microclimate** (Dry Bulb Temp, Relative Humidity, Wind Speed, Solar Radiation) and **Heat Stress Indices** (WBGT, Heat Index, UTCI, HTSI, Composite Risk, Mortality Index).
-   - Layer toggles: Switch between Composite Risk, Thermal Stress, WBGT, Heat Index, Population Exposure, and Demographic Vulnerability.
+   - Vector-mapped choropleth rendering Kolkata's 144 KMC wards.
+   - **Real-Time Hover Telemetry**: Hovering over any ward dynamically updates the right-rail Info Bar with real-time **Microclimate** (Dry Bulb Temp, Relative Humidity, Wind Speed, Solar Radiation) and **Heat Stress Indices** (WBGT, Heat Index, UTCI, HTSI, Mortality Index `/100`, Population SubCard).
+   - **Ordinal Date Selector**: Dates format cleanly with English ordinal suffixes (`21st`, `22nd`, `23rd`, `24th`).
+   - Layer toggles: Switch between Thermal Stress (HTSI), WBGT, Heat Index, Population Exposure, and Demographic Vulnerability.
 
 2. **Ward Analysis & Deep-Dive (`/analysis`)**:
    - In-depth ward profile dashboard featuring 5-day forecasted outlooks, 24-hour heat progression charts, demographic risk factors, and vulnerability breakdowns.
+   - **Demographic Vulnerability Breakdown**: Interactive population composition bar chart for Elderly (60+), Children (0–6), Outdoor Workers, and General Population.
+   - **User-Friendly Empty Selection State**: Immediate "No Ward Selected" banner when no ward is active instead of endless skeleton loading.
 
 3. **Executive Overview & Metro Watch (`/overview`)**:
-   - Citywide KPI status dashboard (Red/Orange/Yellow/Green Watch level), peak risk wards leaderboard, and municipal exposure metrics.
+   - Citywide KPI status dashboard (Red/Orange/Yellow/Green Watch level), peak stress wards leaderboard, and **City Population Heat Exposure Breakdown** analytics card across HTSI tiers.
 
-4. **Alert Dispatch Engine (`/alerts`)**:
-   - Evaluates multi-parameter alert triggers (Composite Risk, WBGT, HTSI, Heat Index) to compute advisory levels (`LOW`, `MODERATE`, `HIGH`, `EXTREME`).
+4. **Index Accuracy & Cross-Model Validation (`lib/accuracy.ts` & `/api/accuracy`)**:
+   - Automated cross-validation engine comparing Ahvaan calculations against international reference services (**Visual Crossing** for WBGT & **WeatherAPI** for Heat Index).
+   - Interactive UI matrix displaying **% Similarity**, **Variance (°C)**, and Provider Source details.
+
+5. **Alert Dispatch Engine (`/alerts`)**:
+   - Evaluates multi-parameter alert triggers (WBGT, HTSI, Heat Index) to compute advisory levels (`LOW`, `MODERATE`, `HIGH`, `EXTREME`).
    - Integrated email dispatch modal to send instant heat advisories to municipal stakeholders.
 
-5. **Ahvaan AI Assistant (`ChatbotWidget`)**:
+6. **Ahvaan AI Assistant (`ChatbotWidget`)**:
    - Stateless AI assistant grounded on live ward telemetry, answering operator queries regarding ward conditions, risk trends, and emergency protocols.
 
 ---
@@ -30,75 +37,55 @@ Ahvaan is an enterprise-grade, ward-level heat risk decision-support platform de
 
 Ahvaan synthesizes multi-dimensional environmental and demographic data into single-score decision indicators using the **HeatShield Science Engine**.
 
-### 1. Composite Heat Risk Index Formula
+### 1. Heat Stress Index (HTSI) & Direct Microclimate Indexing
 
-The total composite risk score $R \in [0, 1]$ is a weighted linear combination of three sub-indexes:
+Primary physical thermal stress is measured directly on the **HTSI Scale ($0–100$)**:
 
-$$R = w_{\text{thermal}} \cdot S_{\text{thermal}} + w_{\text{exposure}} \cdot S_{\text{exposure}} + w_{\text{vulnerability}} \cdot S_{\text{vulnerability}}$$
-
-- **Sub-weights**:
-  - $w_{\text{thermal}} = 0.50$ (50% weight on physical thermal strain)
-  - $w_{\text{exposure}} = 0.30$ (30% weight on population & worker headcount)
-  - $w_{\text{vulnerability}} = 0.20$ (20% weight on demographic sensitivity)
+- **$0 - 30$**: Low Thermal Stress
+- **$30 - 60$**: Moderate Thermal Stress
+- **$60 - 80$**: High Thermal Stress
+- **$80 - 100$**: Extreme Thermal Stress
 
 ---
 
-### 2. Thermal Stress Sub-Index ($S_{\text{thermal}}$)
+### 2. Thermal Stress Indicators
 
-Combines three standardized biometeorological heat stress indicators:
+Combines standardized biometeorological heat stress indicators:
 
-$$S_{\text{thermal}} = 0.50 \cdot \text{WBGT}_{\text{norm}} + 0.30 \cdot \text{HI}_{\text{norm}} + 0.20 \cdot \text{UTCI}_{\text{norm}}$$
-
-- **Normalization Bounds**:
-  - **Wet Bulb Globe Temperature ($\text{WBGT}$)**: Normalizes $[15^\circ\text{C}, 40^\circ\text{C}] \rightarrow [0, 1]$. (Primary occupational heat hazard metric).
-  - **Heat Index ($\text{HI}$)**: Normalizes $[20^\circ\text{C}, 55^\circ\text{C}] \rightarrow [0, 1]$. (NWS apparent temperature).
-  - **Universal Thermal Climate Index ($\text{UTCI}$)**: Normalizes $[15^\circ\text{C}, 45^\circ\text{C}] \rightarrow [0, 1]$. (Human energy balance model).
+- **Wet Bulb Globe Temperature ($\text{WBGT}$)**: Primary occupational heat hazard metric ($[15^\circ\text{C}, 40^\circ\text{C}]$).
+- **Heat Index ($\text{HI}$)**: NWS apparent temperature metric ($[20^\circ\text{C}, 55^\circ\text{C}]$).
+- **Universal Thermal Climate Index ($\text{UTCI}$)**: Human energy balance model ($[15^\circ\text{C}, 45^\circ\text{C}]$).
 
 ---
 
-### 3. Population Exposure Sub-Index ($S_{\text{exposure}}$)
-
-$$S_{\text{exposure}} = 0.40 \cdot \text{Pop}_{\text{norm}} + 0.30 \cdot \text{Density}_{\text{norm}} + 0.30 \cdot \text{OutdoorWorkers}$$
-
-- **Normalization Limits**:
-  - $\text{Pop}_{\text{norm}} = \text{min}(1.0, \frac{\text{Population}}{50,000})$
-  - $\text{Density}_{\text{norm}} = \text{min}(1.0, \frac{\text{Density (persons/km}^2)}{20,000})$
-  - $\text{OutdoorWorkers} \in [0, 1]$ (Fraction of population working outdoors).
-
----
-
-### 4. Demographic Vulnerability Sub-Index ($S_{\text{vulnerability}}$)
-
-Weights sensitive population shares and structural housing conditions:
+### 3. Population Exposure & Demographic Vulnerability
 
 $$S_{\text{vulnerability}} = 0.25 \cdot \text{ElderlyShare} + 0.15 \cdot \text{ChildrenShare} + 0.25 \cdot \text{OutdoorWorkers} + 0.20 \cdot \text{InformalHousing} + 0.15 \cdot \text{LackOfAC}$$
 
 - $\text{ElderlyShare}$: Population fraction aged $\ge 60$ years.
 - $\text{ChildrenShare}$: Population fraction aged $0–6$ years.
-- $\text{InformalHousing}$: Settlement density & non-permanent structure index.
-- $\text{LackOfAC}$: Estimated household fraction without air cooling.
+- $\text{OutdoorWorkers}$: Proportion of informal and outdoor workforce exposed to daylight heat.
+- $\text{InformalHousing}$: Settlement density & structural insulation index.
 
 ---
 
-### 5. Mortality Risk Index ($0–100$)
+### 4. Mortality Risk Index ($0–100$)
 
-Evaluates acute health risk based on nighttime heat retention and heat persistence:
+Evaluates acute health risk based on nighttime heat retention and heat persistence, displayed as `{index}/100`:
 
 $$\text{MortalityIndex} = 100 \times \text{clamp}\left( 0.40 \cdot \text{HI}_{\text{norm}} + 0.25 \cdot \text{Persistence} + 0.20 \cdot (1 - \text{NightRecovery}) + 0.15 \cdot S_{\text{vulnerability}} \right)$$
 
-- **Nighttime Recovery**: Lack of night cooling ($22:00–06:00$) significantly prevents human physiological core body temperature rest, escalating mortality risk.
+- **Nighttime Recovery**: Lack of night cooling ($22:00–06:00$) prevents physiological rest, escalating mortality risk.
 - **Persistence**: Cumulative thermal stress sustained over 72 consecutive hours.
 
 ---
 
-### 6. Risk Severity Categories
+### 5. Cross-Model Accuracy & Similarity Formula
 
-| Risk Score Range | Engine Category | UI Display Label | Action Level |
-| :--- | :--- | :--- | :--- |
-| **$0.00 - 0.30$** | `LOW` | Low | Normal monitoring |
-| **$0.30 - 0.50$** | `MODERATE` | Moderate | Caution, hydration advice |
-| **$0.50 - 0.65$** | `HIGH` | High | Limit outdoor work (12-4 PM) |
-| **$0.65 - 1.00$** | `VERY_HIGH` | Extreme | Open cooling shelters, emergency action |
+$$\text{Similarity (\%)} = \left(1 - \frac{|\text{Value}_{\text{Ahvaan}} - \text{Value}_{\text{Reference}}|}{|\text{Value}_{\text{Reference}}|}\right) \times 100$$
+
+- **WBGT Reference**: Visual Crossing Web Services API timeline.
+- **Heat Index Reference**: WeatherAPI History API endpoint.
 
 ---
 
@@ -109,6 +96,7 @@ $$\text{MortalityIndex} = 100 \times \text{clamp}\left( 0.40 \cdot \text{HI}_{\t
 - **Data & Database**: Drizzle ORM + Postgres (`postgres-js`, Neon pooler).
 - **Caching Layer**: Redis (`ioredis`) with fail-open in-memory TTL map fallback (`lib/redis.ts`).
 - **Client State & Fetching**: SWR (`useSWR`) with optimistic caching and request deduplication.
+- **Accuracy Comparison**: `lib/accuracy.ts` with `/api/accuracy` REST API.
 - **Email Notifications**: Nodemailer (SMTP with simulated fallback mode).
 
 ```
@@ -118,18 +106,16 @@ $$\text{MortalityIndex} = 100 \times \text{clamp}\left( 0.40 \cdot \text{HI}_{\t
                                │
             ┌──────────────────┴──────────────────┐
             ▼                                     ▼
-   Open-Meteo Weather API                  Census / Geo Spatial
+   Open-Meteo / DB Precomputed             Visual Crossing & WeatherAPI
+   (locations, weather, analysis)          (External Reference Benchmarks)
             │                                     │
             └──────────────────┬──────────────────┘
                                ▼
-                    Postgres Engine Tables
-                (locations, weather, analysis)
+               Redis Cache Layer (lib/redis.ts)
                                │
                                ▼
-                Redis Cache Layer (lib/redis.ts)
-                               │
-                               ▼
-               Next.js 15 App Router API Routes
+              Next.js 15 App Router API Routes
+            (/api/wards, /api/accuracy, /api/alerts)
                                │
             ┌──────────────────┼──────────────────┐
             ▼                  ▼                  ▼
@@ -144,15 +130,17 @@ $$\text{MortalityIndex} = 100 \times \text{clamp}\left( 0.40 \cdot \text{HI}_{\t
 ```
 app/
   maps/                # Interactive 144-ward choropleth map & hover telemetry
-  overview/            # Citywide executive watch dashboard
-  analysis/            # Deep-dive ward analytics & 5-day outlook
+  overview/            # Citywide executive watch dashboard & heat exposure summary
+  analysis/            # Deep-dive ward analytics, demographics & 5-day outlook
   alerts/              # Advisory dispatch center & email composer
-  api/                 # RESTful API route endpoints
+  api/
+    accuracy/          # RESTful API route for Visual Crossing / WeatherAPI accuracy benchmark
 
 lib/
+  accuracy.ts          # Index accuracy comparison service (WBGT & HI cross-model similarity)
   config/              # Central configuration (appConfig.ts, navConfig.ts)
-  enums/               # Design system enums (risk.enum.ts, alert.enum.ts, weather.enum.ts)
-  types/               # Domain interfaces (domain.ts)
+  enums/               # Design system enums
+  types/               # Domain interfaces
   heatshield/          # HeatShield math engine (thermal, vulnerability, mortality)
   redis.ts             # Redis cache layer with fail-open fallback
   alerts.ts            # Frontend alert evaluation logic
@@ -165,9 +153,10 @@ components/
     TopBar.tsx         # Navigation header with ward search autocomplete
     WardInfoBar.tsx    # Slide-in right rail / mobile drawer with live telemetry
     TelemetryPanel.tsx # Environmental microclimate sub-cards & tooltips
-    SubCard.tsx        # Parameter card with contextual hover explainers
-    RiskBadge.tsx      # Standardized 5-step risk severity badge
-    AnalyticsView.tsx  # Charts & distribution breakdowns
+    SubCard.tsx        # Parameter card with scoped ? icon hover tooltips
+    AccuracyComparison.tsx # Interactive index accuracy & similarity matrix card
+    AnalyticsView.tsx  # City-wide distribution breakdowns & scatter correlations
+    WardAnalysis.tsx   # Demographic vulnerability bar charts & 24h humidity curves
 ```
 
 ---
@@ -188,7 +177,7 @@ npm install
 
 # 2. Configure Environment Variables
 cp .env.example .env
-# Edit .env and supply your POSTGRES_URL and optional REDIS_URL
+# Edit .env and supply your POSTGRES_URL, REDIS_URL, VISUALCROSSING_API_KEY, and WEATHERAPI_API_KEY
 
 # 3. Start Development Server
 npm run dev

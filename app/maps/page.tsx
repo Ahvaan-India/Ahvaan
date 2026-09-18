@@ -672,7 +672,10 @@ const LAYER_PILL_META: Record<
       { cat: "HIGH", label: "High", hint: "HTSI 60–80" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "HTSI ≥ 80" },
     ],
-    fmt: (v) => (v * 100).toFixed(2),
+    fmt: (v) => {
+      const norm = v > 1 ? (v > 100 ? v / 10 : v) : v * 100;
+      return norm.toFixed(2);
+    },
     suffix: "",
     avgHint: "Mean HTSI across visible wards",
   },
@@ -683,9 +686,9 @@ const LAYER_PILL_META: Record<
       { cat: "HIGH", label: "High", hint: "Exposure 60–80" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "Exposure ≥ 80" },
     ],
-    fmt: (v) => (v * 100).toFixed(0),
+    fmt: (v) => (v > 1 ? v : v * 100).toFixed(0),
     suffix: "/100",
-    avgHint: "Mean exposure across visible wards (×100)",
+    avgHint: "Mean exposure across visible wards",
   },
   vulnerability: {
     bands: [
@@ -694,9 +697,9 @@ const LAYER_PILL_META: Record<
       { cat: "HIGH", label: "High", hint: "Vulnerability 60–80" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "Vulnerability ≥ 80" },
     ],
-    fmt: (v) => (v * 100).toFixed(0),
+    fmt: (v) => (v > 1 ? v : v * 100).toFixed(0),
     suffix: "/100",
-    avgHint: "Mean vulnerability across visible wards (×100)",
+    avgHint: "Mean vulnerability across visible wards",
   },
   wbgt: {
     bands: [
@@ -897,7 +900,7 @@ export default function MapsPage() {
           },
         ],
         avgLabel: "Load",
-        avg: summary ? String(summary.metroHeatLoad) : "—",
+        avg: summary ? String(summary.metroHeatLoad > 100 ? Math.round(summary.metroHeatLoad / 10) : summary.metroHeatLoad) : "—",
         avgSuffix: "/100",
         avgHint: "Metropolitan Heat Load — mean ward risk × 100",
       };

@@ -65,7 +65,7 @@ export async function GET() {
           moderate,
           low,
           deltas,
-          metroHeatLoad: Math.round(meanRisk * 100),
+          metroHeatLoad: Math.min(100, Math.round(meanRisk > 1 ? (meanRisk > 100 ? meanRisk / 10 : meanRisk) : meanRisk * 100)),
           watch,
           refreshedAt: board.computedAt,
           deltaBasis,
