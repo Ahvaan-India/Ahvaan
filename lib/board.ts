@@ -26,6 +26,10 @@ import {
 import { WARD_LOCALITIES } from "./geo/wardNames";
 import { REDIS_TTL, withRedisCache } from "./redis";
 
+import { computeExposureScore } from "./heatshield/exposure";
+import { computeVulnerabilityScore } from "./heatshield/vulnerability";
+import { computeCompositeRisk } from "./heatshield/composite";
+
 type Db = ReturnType<typeof getDb>;
 
 export interface BoardDayPoint {
@@ -43,6 +47,21 @@ export interface BoardWard {
   lat: number | null;
   long: number | null;
   totalPopulation: number | null;
+  thermal?: number | null;
+  wbgt?: number | null;
+  heatIndex?: number | null;
+  utci?: number | null;
+  exposure?: number;
+  vulnerability?: number;
+  temp?: number | null;
+  humidity?: number | null;
+  wind?: number | null;
+  solar?: number | null;
+  realFeel?: number | null;
+  elderlyPct?: number;
+  childrenPct?: number;
+  outdoorWorkerPct?: number;
+  informalIndex?: number;
   latest: RiskResponse | null;
   error: string | null;
   days: BoardDayPoint[];
@@ -201,8 +220,23 @@ async function buildBoard(_daysBack: number, db: Db): Promise<Board> {
     const hiVal = m.hi ?? daySummary.heatIndexMax ?? 0;
     const utciVal = m.utci ?? daySummary.utciMax ?? 0;
 
-    const category = htsiCategory(htsiVal);
-    const riskScore = htsiVal !== null ? (htsiVal > 10 ? htsiVal / 100 : htsiVal / 10) : 0.05;
+    const expRes = pop ? computeExposureScore(pop, loc.geometry) : null;
+    const vulnRes = pop ? computeVulnerabilityScore(pop) : null;
+
+    const expScore = expRes ? Math.round(expRes.score * 100 * 100) / 100 : 45;
+    const vulnScore = vulnRes ? Math.round(vulnRes.score * 100 * 100) / 100 : 40;
+    const elderlyPct = vulnRes ? vulnRes.components.elderly : 0.09;
+    const childrenPct = vulnRes ? vulnRes.components.children : (pop && pop.totalPopulation ? (pop.children0To6 ?? 0) / pop.totalPopulation : 0.08);
+    const outdoorWorkerPct = vulnRes ? vulnRes.components.outdoorWorkers : 0.15;
+    const informalIndex = vulnRes ? vulnRes.components.informalHousing : 0.3;
+
+    const tNorm = htsiVal !== null ? (htsiVal > 1 ? htsiVal / 100 : htsiVal) : 0.35;
+    const eNorm = expRes ? expRes.score : 0.45;
+    const vNorm = vulnRes ? vulnRes.score : 0.40;
+
+    const composite = computeCompositeRisk({ T: tNorm, E: eNorm, V: vNorm, P: 0.1 });
+    const riskScore = composite.risk;
+    const category = composite.category;
 
     const latest: RiskResponse = {
       locationId: loc.id,
@@ -217,10 +251,10 @@ async function buildBoard(_daysBack: number, db: Db): Promise<Board> {
       },
       scores: {
         thermalStress: htsiVal !== null ? Math.round(htsiVal * 100) / 100 : 0,
-        exposure: 0,
-        vulnerability: 0,
-        persistence: 0,
-        nighttimeRecovery: 0,
+        exposure: expScore,
+        vulnerability: vulnScore,
+        persistence: 0.5,
+        nighttimeRecovery: 0.6,
       },
       compositeRisk: {
         value: Math.round(riskScore * 1000) / 1000,
@@ -264,6 +298,21 @@ async function buildBoard(_daysBack: number, db: Db): Promise<Board> {
 
     return {
       ...base,
+      thermal: htsiVal !== null ? Math.round(htsiVal * 100) / 100 : null,
+      wbgt: Math.round(wbgtVal * 10) / 10,
+      heatIndex: Math.round(hiVal * 10) / 10,
+      utci: Math.round(utciVal * 10) / 10,
+      exposure: expScore,
+      vulnerability: vulnScore,
+      temp: m.temp !== null ? Math.round(m.temp * 10) / 10 : null,
+      humidity: m.humidity !== null ? Math.round(m.humidity) : null,
+      wind: m.wind !== null ? Math.round(m.wind * 10) / 10 : null,
+      solar: m.solar !== null ? Math.round(m.solar) : null,
+      realFeel: m.realFeel !== null ? Math.round(m.realFeel * 10) / 10 : null,
+      elderlyPct,
+      childrenPct,
+      outdoorWorkerPct,
+      informalIndex,
       latest,
       error: null,
       days,

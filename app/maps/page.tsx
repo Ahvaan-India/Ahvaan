@@ -137,11 +137,10 @@ function WardDetailBody({
     if (activeId) router.push(`/analysis?ward=${activeId}`);
     else router.push("/analysis");
   };
-  const { data: showcase } = useSWR(
+  const { data: showcase, isLoading: isShowcaseLoading } = useSWR(
     activeId ? `/api/showcase/${activeId}` : null,
     jsonFetch,
     {
-      keepPreviousData: true,
       dedupingInterval: 10000,
       revalidateOnFocus: false,
     },
@@ -154,6 +153,13 @@ function WardDetailBody({
     setDayIdx(0);
     setHour(null);
   }, [activeId]);
+
+  const isDataLoading =
+    isShowcaseLoading ||
+    !showcase ||
+    (showcase as any)?.locationId !== activeId ||
+    !telemetry ||
+    (telemetry as any)?.wardId !== activeId;
 
   const safeDayIdx = Math.min(dayIdx, Math.max(0, days.length - 1));
   const day = days[safeDayIdx] ?? null;
@@ -191,12 +197,36 @@ function WardDetailBody({
     return flat;
   }, [days]);
 
-  if (!telemetry) {
+  if (isDataLoading) {
     return (
-      <div className="space-y-4 p-4 animate-pulse">
-        <Skeleton className="h-20 w-full rounded-xl" />
-        <Skeleton className="h-28 w-full rounded-xl" />
-        <Skeleton className="h-36 w-full rounded-xl" />
+      <div className="space-y-5 p-4 animate-pulse">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-28 rounded-md" />
+          <div className="flex gap-2">
+            <Skeleton className="h-8 w-16 rounded-full" />
+            <Skeleton className="h-8 w-16 rounded-full" />
+            <Skeleton className="h-8 w-16 rounded-full" />
+            <Skeleton className="h-8 w-16 rounded-full" />
+          </div>
+          <Skeleton className="h-10 w-full rounded-xl" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-36 rounded-md" />
+          <div className="grid grid-cols-2 gap-3">
+            <Skeleton className="h-24 rounded-2xl" />
+            <Skeleton className="h-24 rounded-2xl" />
+            <Skeleton className="h-24 rounded-2xl" />
+            <Skeleton className="h-24 rounded-2xl" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-32 rounded-md" />
+          <Skeleton className="h-28 w-full rounded-2xl" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-40 rounded-md" />
+          <Skeleton className="h-36 w-full rounded-2xl" />
+        </div>
       </div>
     );
   }
@@ -216,14 +246,14 @@ function WardDetailBody({
     null;
 
   const activeEntry = entry ?? (showcase as any)?.current ?? null;
-  const htsiVal = activeEntry?.htsi ?? (telemetry as any)?.risk?.indicators?.htsi ?? (telemetry as any)?.risk?.thermal ?? null;
-  const wbgtVal = activeEntry?.wbgt ?? (telemetry as any)?.risk?.indicators?.wbgt ?? (telemetry as any)?.risk?.wbgt ?? null;
-  const hiVal = activeEntry?.hi ?? (telemetry as any)?.risk?.indicators?.heatIndex ?? (telemetry as any)?.risk?.heatIndex ?? null;
-  const utciVal = activeEntry?.utci ?? (telemetry as any)?.risk?.indicators?.utci ?? (telemetry as any)?.risk?.utci ?? null;
-  const tempVal = activeEntry?.temp ?? (telemetry as any)?.macro?.temp ?? null;
-  const humidityVal = activeEntry?.humidity ?? (telemetry as any)?.macro?.humidity ?? null;
-  const windVal = activeEntry?.wind ?? (telemetry as any)?.macro?.wind ?? null;
-  const solarVal = activeEntry?.solar ?? (telemetry as any)?.macro?.solar ?? null;
+  const htsiVal = displayCell?.thermal ?? activeEntry?.htsi ?? (telemetry as any)?.risk?.indicators?.htsi ?? (telemetry as any)?.risk?.thermal ?? null;
+  const wbgtVal = displayCell?.wbgt ?? activeEntry?.wbgt ?? (telemetry as any)?.risk?.indicators?.wbgt ?? (telemetry as any)?.risk?.wbgt ?? null;
+  const hiVal = displayCell?.heatIndex ?? activeEntry?.hi ?? (telemetry as any)?.risk?.indicators?.heatIndex ?? (telemetry as any)?.risk?.heatIndex ?? null;
+  const utciVal = displayCell?.utci ?? activeEntry?.utci ?? (telemetry as any)?.risk?.indicators?.utci ?? (telemetry as any)?.risk?.utci ?? null;
+  const tempVal = displayCell?.temp ?? activeEntry?.temp ?? (telemetry as any)?.macro?.temp ?? null;
+  const humidityVal = displayCell?.humidity ?? activeEntry?.humidity ?? (telemetry as any)?.macro?.humidity ?? null;
+  const windVal = displayCell?.wind ?? activeEntry?.wind ?? (telemetry as any)?.macro?.wind ?? null;
+  const solarVal = displayCell?.solar ?? activeEntry?.solar ?? (telemetry as any)?.macro?.solar ?? null;
 
   return (
     <div className="space-y-5 p-4">
@@ -667,9 +697,9 @@ const LAYER_PILL_META: Record<
 > = {
   thermal: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "HTSI < 20" },
-      { cat: "MODERATE", label: "Moderate", hint: "HTSI 20–60" },
-      { cat: "HIGH", label: "High", hint: "HTSI 60–80" },
+      { cat: "LOW", label: "Low", hint: "HTSI < 30" },
+      { cat: "MODERATE", label: "Moderate", hint: "HTSI 30–65" },
+      { cat: "HIGH", label: "High", hint: "HTSI 65–80" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "HTSI ≥ 80" },
     ],
     fmt: (v) => {
@@ -681,9 +711,9 @@ const LAYER_PILL_META: Record<
   },
   exposure: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "Exposure < 20" },
-      { cat: "MODERATE", label: "Moderate", hint: "Exposure 20–60" },
-      { cat: "HIGH", label: "High", hint: "Exposure 60–80" },
+      { cat: "LOW", label: "Low", hint: "Exposure < 30" },
+      { cat: "MODERATE", label: "Moderate", hint: "Exposure 30–65" },
+      { cat: "HIGH", label: "High", hint: "Exposure 65–80" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "Exposure ≥ 80" },
     ],
     fmt: (v) => (v > 1 ? v : v * 100).toFixed(0),
@@ -692,9 +722,9 @@ const LAYER_PILL_META: Record<
   },
   vulnerability: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "Vulnerability < 20" },
-      { cat: "MODERATE", label: "Moderate", hint: "Vulnerability 20–60" },
-      { cat: "HIGH", label: "High", hint: "Vulnerability 60–80" },
+      { cat: "LOW", label: "Low", hint: "Vulnerability < 30" },
+      { cat: "MODERATE", label: "Moderate", hint: "Vulnerability 30–65" },
+      { cat: "HIGH", label: "High", hint: "Vulnerability 65–80" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "Vulnerability ≥ 80" },
     ],
     fmt: (v) => (v > 1 ? v : v * 100).toFixed(0),
@@ -703,9 +733,9 @@ const LAYER_PILL_META: Record<
   },
   wbgt: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "WBGT < 20°C" },
-      { cat: "MODERATE", label: "Moderate", hint: "WBGT 20–30°C" },
-      { cat: "HIGH", label: "High", hint: "WBGT 30–35°C" },
+      { cat: "LOW", label: "Low", hint: "WBGT < 22.5°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "WBGT 22.5–31.3°C" },
+      { cat: "HIGH", label: "High", hint: "WBGT 31.3–35°C" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "WBGT ≥ 35°C" },
     ],
     fmt: (v) => `${v.toFixed(1)}°`,
@@ -714,9 +744,9 @@ const LAYER_PILL_META: Record<
   },
   hi: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "Heat index < 27°C" },
-      { cat: "MODERATE", label: "Moderate", hint: "Heat index 27–41°C" },
-      { cat: "HIGH", label: "High", hint: "Heat index 41–48°C" },
+      { cat: "LOW", label: "Low", hint: "Heat index < 30.5°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "Heat index 30.5–42.8°C" },
+      { cat: "HIGH", label: "High", hint: "Heat index 42.8–48°C" },
       { cat: "VERY_HIGH", label: "Extreme", hint: "Heat index ≥ 48°C" },
     ],
     fmt: (v) => `${v.toFixed(1)}°`,
@@ -753,18 +783,26 @@ export default function MapsPage() {
     [],
   );
 
+  const wardSwrOpts = useMemo(
+    () => ({
+      dedupingInterval: 10000,
+      revalidateOnFocus: false,
+    }),
+    [],
+  );
+
   const { data: summary } = useSWR("/api/wards/summary", jsonFetch, swrOpts);
   const { data: heatmap } = useSWR("/api/wards/heatmap", jsonFetch, swrOpts);
   const displayId = hoveredId ?? selectedId;
   const { data: telemetryRaw } = useSWR(
     displayId ? `/api/wards/${displayId}/telemetry` : null,
     jsonFetch,
-    swrOpts,
+    wardSwrOpts,
   );
   const { data: forecastRaw } = useSWR(
     displayId ? `/api/forecast/${displayId}?days=5` : null,
     jsonFetch,
-    swrOpts,
+    wardSwrOpts,
   );
   const cells = (heatmap as any)?.wards ?? [];
   const selectedCell = selectedId
@@ -816,14 +854,14 @@ export default function MapsPage() {
       },
       demographics: {
         totalPopulation: displayCell.population ?? 0,
-        elderlyPct: displayCell.elderlyPct ?? 0.1,
+        elderlyPct: displayCell.elderlyPct ?? 0.09,
         elderlyCutoff: ">60",
         elderlyDefaulted: false,
         childrenPct: displayCell.childrenPct ?? 0.08,
         outdoorWorkerPct: displayCell.outdoorWorkerPct ?? 0.15,
-        informalIndex: displayCell.informalIndex ?? 0.2,
+        informalIndex: displayCell.informalIndex ?? 0.3,
         informalDefaulted: false,
-        settlementDensity: settlementDensity(displayCell.informalIndex ?? 0.2),
+        settlementDensity: settlementDensity(displayCell.informalIndex ?? 0.3),
       },
     };
   }, [telemetryRaw, displayId, displayCell]);

@@ -60,6 +60,11 @@ function warnOnce(msg: unknown): void {
 }
 
 async function getClient(): Promise<RedisLike | null> {
+  // Only connect to external Redis in production or if explicitly enabled in dev
+  const isProd = process.env.NODE_ENV === "production";
+  const forceEnable = process.env.ENABLE_REDIS_DEV === "true";
+  if (!isProd && !forceEnable) return null;
+
   const url = process.env.REDIS_URL;
   if (!url) return null;
   if (client) return client;
@@ -81,7 +86,9 @@ async function getClient(): Promise<RedisLike | null> {
 }
 
 export function isRedisConfigured(): boolean {
-  return Boolean(process.env.REDIS_URL);
+  const isProd = process.env.NODE_ENV === "production";
+  const forceEnable = process.env.ENABLE_REDIS_DEV === "true";
+  return Boolean(process.env.REDIS_URL) && (isProd || forceEnable);
 }
 
 /**
@@ -166,20 +173,26 @@ export async function redisDel(keyOrPrefix: string): Promise<void> {
 
 /**
  * Read-through cache: Redis (or memory fallback) first, `fn` (Postgres)
- * on miss, then populate with `ttlSeconds`.
+ * on miss, then populate with `ttlSeconds`. Always fail-open to Postgres.
  */
 export async function withRedisCache<T>(
   key: string,
   ttlSeconds: number,
   fn: () => Promise<T>,
 ): Promise<{ data: T; cached: boolean }> {
-  const hit = await redisGet<T>(key);
-  if (hit !== null) return { data: hit, cached: true };
+  try {
+    const hit = await redisGet<T>(key);
+    if (hit !== null) return { data: hit, cached: true };
+  } catch (err) {
+    warnOnce(err);
+  }
   const data = await fn();
-  // Don't cache nullish misses for long — a thundering herd on a missing
-  // ward is better than a stale "not found".
   if (data !== null && data !== undefined) {
-    await redisSet(key, data, ttlSeconds);
+    try {
+      await redisSet(key, data, ttlSeconds);
+    } catch (err) {
+      warnOnce(err);
+    }
   }
   return { data, cached: false };
 }

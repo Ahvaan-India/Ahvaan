@@ -38,6 +38,15 @@ export interface MapWard {
   thermal: number | null;
   exposure: number | null;
   vulnerability: number | null;
+  temp?: number | null;
+  humidity?: number | null;
+  wind?: number | null;
+  solar?: number | null;
+  realFeel?: number | null;
+  elderlyPct?: number | null;
+  childrenPct?: number | null;
+  outdoorWorkerPct?: number | null;
+  informalIndex?: number | null;
   population: number | null;
   lat: number;
   long: number;
@@ -164,13 +173,12 @@ export function layerStepFor(c: MapWard, layer: string): number | null {
   let n: number;
   if (layer === "wbgt") n = (v - 15) / 25;
   else if (layer === "hi") n = (v - 20) / 35;
-  else if (layer === "thermal") n = v > 10 ? v / 100 : v / 10;
-  else n = v; // exposure/vuln already 0–1
+  else n = v > 1 ? v / 100 : v; // thermal/exposure/vuln (0–1 or 0–100)
   const clamped = Math.max(0, Math.min(1, n));
   if (clamped >= 0.8) return 5;
-  if (clamped >= 0.6) return 4;
-  if (clamped >= 0.4) return 3;
-  if (clamped >= 0.2) return 2;
+  if (clamped >= 0.65) return 4;
+  if (clamped >= 0.5) return 3;
+  if (clamped >= 0.3) return 2;
   return 1;
 }
 
@@ -973,17 +981,67 @@ export function KolkataMap({
                 </p>
               ) : null;
             })()}
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-xl font-black tabular-nums leading-none">
-                {tip.cell.thermal !== null
-                  ? `${tip.cell.thermal.toFixed(2)}`
-                  : "-"}
-              </span>
-              {tip.cell.category && <RiskBadge category={tip.cell.category} />}
-            </div>
-            <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-              HTSI Index
-            </p>
+            {(() => {
+              let valStr = "-";
+              let labelStr = "HTSI Index";
+              if (layer === "wbgt") {
+                labelStr = "WBGT Index";
+                valStr =
+                  tip.cell.wbgt !== null && Number.isFinite(tip.cell.wbgt)
+                    ? `${tip.cell.wbgt.toFixed(1)}°C`
+                    : "-";
+              } else if (layer === "hi") {
+                labelStr = "Heat Index";
+                valStr =
+                  tip.cell.heatIndex !== null && Number.isFinite(tip.cell.heatIndex)
+                    ? `${tip.cell.heatIndex.toFixed(1)}°C`
+                    : "-";
+              } else if (layer === "exposure") {
+                labelStr = "Exposure Index";
+                const v = tip.cell.exposure;
+                valStr =
+                  v !== null && Number.isFinite(v)
+                    ? (v > 1 ? v.toFixed(0) : (v * 100).toFixed(0))
+                    : "-";
+              } else if (layer === "vulnerability") {
+                labelStr = "Vulnerability Index";
+                const v = tip.cell.vulnerability;
+                valStr =
+                  v !== null && Number.isFinite(v)
+                    ? (v > 1 ? v.toFixed(0) : (v * 100).toFixed(0))
+                    : "-";
+              } else {
+                labelStr = "HTSI Index";
+                const v = tip.cell.thermal;
+                valStr =
+                  v !== null && Number.isFinite(v)
+                    ? (v > 1 ? v.toFixed(2) : (v * 100).toFixed(2))
+                    : "-";
+              }
+              const step = layerStepFor(tip.cell, layer) ?? 1;
+              const layerCategory =
+                step <= 1
+                  ? "LOW"
+                  : step <= 3
+                    ? "MODERATE"
+                    : step === 4
+                      ? "HIGH"
+                      : "VERY_HIGH";
+
+              return (
+                <>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="text-xl font-black tabular-nums leading-none">
+                      {valStr}
+                    </span>
+                    <RiskBadge category={layerCategory} />
+                  </div>
+                  <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    {labelStr}
+                  </p>
+                </>
+              );
+            })()}
             <p className="mt-0.5 text-[10px] font-medium text-primary">
               Click for full telemetry →
             </p>
