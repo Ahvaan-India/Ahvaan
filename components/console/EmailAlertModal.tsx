@@ -1,17 +1,28 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 import { Bot, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   DEFAULT_ALERT_EMAIL,
   composeAlertHtml,
   composeAlertSubject,
   isValidEmail,
 } from "@/lib/email/compose";
-import type { WardAlert } from "@/lib/alerts";
+import { evaluateWardAlert, type WardAlert } from "@/lib/alerts";
+import { getWardLocality } from "@/lib/geo/wardNames";
 import type { Telemetry } from "./TelemetryPanel";
+
+const jsonFetch = (u: string) => fetch(u).then((r) => { if (!r.ok) throw new Error(String(r.status)); return r.json(); });
 
 export interface OutlookDay {
   date: string;
@@ -30,12 +41,12 @@ const BLOCKS: Array<{ key: BlockKey; label: string }> = [
   { key: "advisory", label: "Advisory text" },
 ];
 
-/**
- * Email alert modal. Everything is evaluated client-side (lib/alerts.ts):
- * the ward's level + triggers arrive as props, the operator ticks which
- * data blocks go into the email, and POST /api/email/send delivers it.
- * Nothing is saved anywhere — each send is fire-and-forget.
- */
+export interface WardSelectItem {
+  ward: number;
+  wardName: string | null;
+  wardId: number;
+}
+
 export function EmailAlertModal({
   open,
   onClose,
@@ -46,6 +57,7 @@ export function EmailAlertModal({
   timezone,
   telemetry,
   outlook,
+  wards: passedWards,
 }: {
   open: boolean;
   onClose: () => void;
@@ -56,7 +68,9 @@ export function EmailAlertModal({
   timezone: string;
   telemetry: Telemetry | null;
   outlook: OutlookDay[];
+  wards?: WardSelectItem[];
 }) {
+  const [selectedWardId, setSelectedWardId] = useState<number | null>(wardId);
   const [email, setEmail] = useState(DEFAULT_ALERT_EMAIL);
   const [blocks, setBlocks] = useState<Record<BlockKey, boolean>>({
     summary: true,
@@ -75,102 +89,215 @@ export function EmailAlertModal({
     errorText?: string;
   } | null>(null);
 
+  // Fallback ward catalog fetch if wards prop is missing
+  const { data: heatmapData } = useSWR(
+    open && !passedWards ? "/api/wards/heatmap" : null,
+    jsonFetch,
+  );
+
+  const allWardsList: WardSelectItem[] = useMemo(() => {
+    if (passedWards && passedWards.length > 0) return passedWards;
+    const items = (heatmapData as any)?.wards ?? [];
+    return items.map((w: any) => ({
+      ward: w.ward,
+      wardName: w.wardName ?? null,
+      wardId: w.wardId ?? w.ward,
+    }));
+  }, [passedWards, heatmapData]);
+
+  // Sync clicked ward ID whenever modal opens or initial wardId prop changes
   useEffect(() => {
     if (open) {
+      setSelectedWardId(wardId);
       setStatus("idle");
       setResult(null);
       setEmail((e) => e || DEFAULT_ALERT_EMAIL);
     }
-  }, [open ]);
+  }, [open, wardId]);
 
-  const wardLabel =
-    ward !== null ? `Ward ${ward}` : wardId !== null ? `Location ${wardId}` : "Ward";
+  // Fetch telemetry & forecast dynamically when a different ward is selected in the modal
+  const isDifferentWard = selectedWardId !== null && selectedWardId !== wardId;
+
+  const { data: fetchedTelemetry } = useSWR<any>(
+    open && isDifferentWard ? `/api/wards/${selectedWardId}/telemetry` : null,
+    jsonFetch,
+  );
+
+  const { data: fetchedForecast } = useSWR<any>(
+    open && isDifferentWard ? `/api/forecast/${selectedWardId}?days=5` : null,
+    jsonFetch,
+  );
+
+  // Derive active values for selected modal ward
+  const activeWardId = selectedWardId;
+
+  const activeWardObj = useMemo(() => {
+    if (activeWardId === null) return null;
+    return allWardsList.find(
+      (w) => w.wardId === activeWardId || w.ward === activeWardId,
+    );
+  }, [allWardsList, activeWardId]);
+
+  const activeWardNum = activeWardObj?.ward ?? (activeWardId === wardId ? ward : activeWardId);
+  const activeWardName = activeWardObj?.wardName ?? (activeWardNum !== null ? getWardLocality(activeWardNum) : null);
+  const activeWardLabel = activeWardNum !== null ? `Ward ${activeWardNum}` : activeWardId !== null ? `Location ${activeWardId}` : "Ward";
+
+  const activeTelemetry: Telemetry | null = isDifferentWard
+    ? (fetchedTelemetry ?? null)
+    : telemetry;
+
+  const activeOutlook: OutlookDay[] = isDifferentWard
+    ? ((fetchedForecast as any)?.days ?? []).map((d: any) => ({
+        date: d.date,
+        tempMax: d.tempMax,
+        risk: d.risk,
+        category: d.category,
+      }))
+    : outlook;
+
+  const activeEvaluation: WardAlert | null = useMemo(() => {
+    if (!isDifferentWard && evaluation) return evaluation;
+    if (!activeTelemetry) return null;
+    return evaluateWardAlert(
+      {
+        riskScore: activeTelemetry.risk?.value,
+        htsiMax: (activeTelemetry.risk as any)?.htsi ?? activeTelemetry.risk?.thermal,
+        wbgtMax: activeTelemetry.risk?.wbgt,
+        heatIndexMax: activeTelemetry.risk?.heatIndex,
+      },
+      activeWardLabel,
+    );
+  }, [isDifferentWard, evaluation, activeTelemetry, activeWardLabel]);
 
   const message = useMemo(() => {
+    if (activeWardId === null) return "";
+    const sevLabel =
+      activeEvaluation?.level === "EXTREME"
+        ? "Extreme"
+        : activeEvaluation?.level === "HIGH"
+          ? "High"
+          : activeEvaluation?.level === "MODERATE"
+            ? "Moderate"
+            : "Low";
+
     const lines = [
-      `Ahvaan ${evaluation?.level ?? "—"} Heat Alert`,
-      `${wardLabel}${wardName ? ` · ${wardName}` : ""}`,
+      `Ahvaan ${sevLabel} Heat Advisory`,
+      `${activeWardLabel}${activeWardName ? ` · ${activeWardName}` : ""}`,
     ];
-    if (blocks.summary && telemetry?.risk) {
-      lines.push(`Risk ${(telemetry.risk.value * 100).toFixed(0)}/100 (${telemetry.risk.displayCategory})`);
-    } else if (blocks.summary && evaluation) {
-      lines.push(`Alert level: ${evaluation.level}`);
+    if (blocks.summary) {
+      lines.push(`Category: ${sevLabel}`);
     }
-    if (blocks.indicators && telemetry) {
-      const m = telemetry.macro;
+    if (blocks.indicators && activeTelemetry) {
+      const m = activeTelemetry.macro;
+      const r = activeTelemetry.risk;
       const parts = [
-        m.temp !== null ? `${m.temp.toFixed(1)}°C` : null,
-        telemetry.risk ? `WBGT ${telemetry.risk.wbgt.toFixed(1)}` : null,
-        m.humidity !== null ? `RH ${m.humidity.toFixed(0)}%` : null,
+        r ? `HTSI ${((r as any).htsi ?? (r.thermal * 100)).toFixed(1)}/100` : null,
+        r ? `WBGT ${r.wbgt.toFixed(1)}°C` : null,
+        r?.heatIndex ? `HI ${r.heatIndex.toFixed(1)}°C` : null,
+        m.temp !== null ? `Temp ${m.temp.toFixed(1)}°C` : null,
+        m.humidity !== null ? `Humidity ${m.humidity.toFixed(0)}%` : null,
       ].filter(Boolean);
-      if (parts.length > 0) lines.push(parts.join(" · "));
+      if (parts.length > 0) lines.push(`Indicators: ${parts.join(" · ")}`);
     }
-    if (blocks.drivers && evaluation && evaluation.triggers.length > 0)
-      lines.push(`Triggers: ${evaluation.triggers.join("; ")}`);
-    if (blocks.outlook && outlook.length > 0) {
+    if (blocks.drivers && activeEvaluation && activeEvaluation.triggers.length > 0)
+      lines.push(`Triggers: ${activeEvaluation.triggers.join("; ")}`);
+    if (blocks.outlook && activeOutlook.length > 0) {
       lines.push(
-        "Next: " +
-          outlook
+        "5-Day Outlook: " +
+          activeOutlook
             .slice(0, 5)
-            .map((d) => `${d.date.slice(5)} ${(d.risk * 100).toFixed(0)}`)
+            .map((d) => `${d.date.slice(5)} (${d.category || "Low"})`)
             .join(", "),
       );
     }
-    if (blocks.advisory && evaluation) lines.push(`Advisory: ${evaluation.advisory}`);
-    lines.push("— Sent from the Ahvaan console (decision-support, not a clinical prediction)");
+    if (blocks.advisory && activeEvaluation)
+      lines.push(`Recommended Safety Actions: ${activeEvaluation.advisory}`);
+    lines.push(
+      "— Sent from the Ahvaan Heat Safety Console (decision-support system)",
+    );
     return lines.join("\n");
-  }, [evaluation, blocks, telemetry, outlook, wardLabel, wardName]);
+  }, [
+    activeWardId,
+    activeEvaluation,
+    activeWardLabel,
+    activeWardName,
+    blocks,
+    activeTelemetry,
+    activeOutlook,
+  ]);
 
   const subject = useMemo(() => {
-    if (!evaluation || wardId === null) return "";
+    if (!activeEvaluation || activeWardId === null) return "";
     return composeAlertSubject(
       {
-        severity: evaluation.level,
-        wardId,
-        ward,
-        wardName,
-        riskScore: telemetry?.risk ? telemetry.risk.value : 0,
-        wbgt: telemetry?.risk ? telemetry.risk.wbgt : null,
-        peakWindowStart: null,
-        peakWindowEnd: null,
-        advisoryText: evaluation.advisory,
+        severity: activeEvaluation.level,
+        wardId: activeWardId,
+        ward: activeWardNum,
+        wardName: activeWardName,
+        htsi: activeTelemetry?.risk ? ((activeTelemetry.risk as any).htsi ?? (activeTelemetry.risk.thermal * 100)) : null,
+        wbgt: activeTelemetry?.risk ? activeTelemetry.risk.wbgt : null,
+        heatIndex: activeTelemetry?.risk ? activeTelemetry.risk.heatIndex : null,
+        utci: activeTelemetry?.risk ? activeTelemetry.risk.utci : null,
+        temperature: activeTelemetry?.macro ? activeTelemetry.macro.temp : null,
+        humidity: activeTelemetry?.macro ? activeTelemetry.macro.humidity : null,
+        advisoryText: activeEvaluation.advisory,
       },
       timezone,
     );
-  }, [evaluation, wardId, ward, wardName, telemetry, timezone]);
+  }, [
+    activeEvaluation,
+    activeWardId,
+    activeWardNum,
+    activeWardName,
+    activeTelemetry,
+    timezone,
+  ]);
 
   const html = useMemo(() => {
-    if (!evaluation || wardId === null) return "";
+    if (!activeEvaluation || activeWardId === null) return "";
     return composeAlertHtml(
       {
-        severity: evaluation.level,
-        wardId,
-        ward: ward,
-        wardName,
-        riskScore: telemetry?.risk ? telemetry.risk.value : 0,
-        wbgt: telemetry?.risk ? telemetry.risk.wbgt : null,
-        peakWindowStart: null,
-        peakWindowEnd: null,
-        advisoryText: blocks.advisory ? evaluation.advisory : null,
+        severity: activeEvaluation.level,
+        wardId: activeWardId,
+        ward: activeWardNum,
+        wardName: activeWardName,
+        htsi: activeTelemetry?.risk ? ((activeTelemetry.risk as any).htsi ?? (activeTelemetry.risk.thermal * 100)) : null,
+        wbgt: activeTelemetry?.risk ? activeTelemetry.risk.wbgt : null,
+        heatIndex: activeTelemetry?.risk ? activeTelemetry.risk.heatIndex : null,
+        utci: activeTelemetry?.risk ? activeTelemetry.risk.utci : null,
+        temperature: activeTelemetry?.macro ? activeTelemetry.macro.temp : null,
+        humidity: activeTelemetry?.macro ? activeTelemetry.macro.humidity : null,
+        advisoryText: blocks.advisory ? activeEvaluation.advisory : null,
       },
       timezone,
       {
-        drivers: blocks.drivers ? evaluation.triggers.join("; ") : null,
+        drivers: blocks.drivers ? activeEvaluation.triggers.join("; ") : null,
         outlook:
-          blocks.outlook && outlook.length > 0
-            ? "Next: " +
-              outlook.slice(0, 5).map((d) => `${d.date.slice(5)} ${(d.risk * 100).toFixed(0)}`).join(", ")
+          blocks.outlook && activeOutlook.length > 0
+            ? activeOutlook
+                .slice(0, 5)
+                .map((d) => `${d.date.slice(5)} (${d.category || "Low"})`)
+                .join(", ")
             : null,
       },
     );
-  }, [evaluation, wardId, ward, wardName, telemetry, timezone, blocks, outlook]);
+  }, [
+    activeEvaluation,
+    activeWardId,
+    activeWardNum,
+    activeWardName,
+    activeTelemetry,
+    timezone,
+    blocks,
+    activeOutlook,
+  ]);
 
   if (!open) return null;
 
   const toggle = (k: BlockKey) => setBlocks((b) => ({ ...b, [k]: !b[k] }));
 
   const send = async () => {
-    if (!isValidEmail(email) || wardId === null) return;
+    if (!isValidEmail(email) || activeWardId === null) return;
     setStatus("sending");
     setResult(null);
     try {
@@ -227,16 +354,57 @@ export function EmailAlertModal({
           </Button>
         </CardHeader>
         <CardContent className="space-y-3">
-          {evaluation && (
+          {/* Ward Select Dropdown Menu */}
+          <div className="space-y-1">
+            <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Select Target Ward
+            </label>
+            <Select
+              value={selectedWardId !== null ? String(selectedWardId) : "none"}
+              onValueChange={(val) => {
+                if (val === "none") setSelectedWardId(null);
+                else setSelectedWardId(Number(val));
+              }}
+            >
+              <SelectTrigger className="h-9 w-full rounded border-input bg-card text-sm shadow-sm">
+                <SelectValue placeholder="Select a ward..." />
+              </SelectTrigger>
+              <SelectContent className="max-h-60">
+                <SelectItem value="none">None (Select a Ward)</SelectItem>
+                {allWardsList.map((w) => {
+                  const localityName = w.wardName || getWardLocality(w.ward);
+                  return (
+                    <SelectItem
+                      key={w.wardId || w.ward}
+                      value={String(w.wardId || w.ward)}
+                    >
+                      Ward {w.ward}{localityName ? ` · ${localityName}` : ""}
+                    </SelectItem>
+                  );
+                })}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {selectedWardId === null ? (
+            <div className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
+              No ward selected. Please select a ward from the dropdown above to generate an email alert.
+            </div>
+          ) : activeEvaluation ? (
             <p className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
-              <span className="font-bold">{evaluation.headline}</span>
-              {evaluation.triggers.length > 0 && (
+              <span className="font-bold">{activeEvaluation.headline}</span>
+              {activeEvaluation.triggers.length > 0 && (
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  {evaluation.triggers.join(" · ")}
+                  {activeEvaluation.triggers.join(" · ")}
                 </span>
               )}
             </p>
+          ) : (
+            <div className="rounded-lg border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+              Loading ward telemetry & risk evaluation…
+            </div>
           )}
+
           <label className="block text-sm">
             <span className="mb-1 block text-muted-foreground">
               Recipient email address
@@ -248,68 +416,69 @@ export function EmailAlertModal({
               inputMode="email"
               placeholder="heat-officer@example.gov.in"
             />
-            {!emailValid && (
-              <span className="text-xs text-red-600">Enter a valid email address.</span>
-            )}
           </label>
-          <fieldset className="text-sm">
-            <legend className="mb-1 text-muted-foreground">Data blocks to send</legend>
+
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Include data blocks
+            </span>
             <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-              {BLOCKS.map((b) => (
+              {BLOCKS.map(({ key, label }) => (
                 <label
-                  key={b.key}
-                  className="flex cursor-pointer items-center gap-2 rounded border border-border px-2 py-1.5"
+                  key={key}
+                  className="flex items-center gap-2 text-xs text-foreground"
                 >
                   <input
                     type="checkbox"
-                    checked={blocks[b.key]}
-                    onChange={() => toggle(b.key)}
-                    className="h-4 w-4 accent-red-600"
+                    checked={blocks[key]}
+                    onChange={() => toggle(key)}
+                    className="rounded border-input text-primary focus:ring-primary"
                   />
-                  {b.label}
+                  <span>{label}</span>
                 </label>
               ))}
             </div>
-          </fieldset>
-          <div className="text-sm">
-            <span className="mb-1 block text-muted-foreground">Email preview</span>
-            <p className="mb-1 truncate rounded border border-border bg-secondary/40 px-2 py-1 font-mono text-xs">
-              Subject: {subject || "—"}
-            </p>
-            <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap rounded border border-border bg-secondary/40 p-2 font-mono text-xs">
-              {message}
-            </pre>
           </div>
-          {status === "sent" && (
-            <div className="rounded border border-green-200 bg-green-50/50 p-2.5 text-sm dark:border-green-900/50 dark:bg-green-950/40">
-              <p className="font-semibold text-green-800 dark:text-green-200">
-                ✅ Email sent ({result?.statusText || "SENT"} via {result?.mode || "smtp"})
-                {result?.messageId ? ` · id ${result.messageId}` : ""}
-              </p>
-              {result?.mode === "simulated" && (
-                <p className="mt-1 text-xs text-green-700 dark:text-green-300">
-                  Simulated send — set SMTP_HOST/SMTP_USER/SMTP_PASS/EMAIL_FROM in .env to deliver for real.
-                </p>
-              )}
-            </div>
+
+          <div>
+            <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Generated message preview
+            </span>
+            <textarea
+              readOnly
+              value={message || "Select a ward to view message preview."}
+              rows={5}
+              className="w-full rounded border border-input bg-muted/50 p-2 font-mono text-xs text-foreground focus:outline-none"
+            />
+          </div>
+
+          {result?.errorText && (
+            <p className="text-xs text-red-600 dark:text-red-400">
+              {result.errorText}
+            </p>
           )}
-          {status === "error" && (
-            <div className="rounded border border-red-200 bg-red-50/50 p-2.5 text-sm dark:border-red-900/50 dark:bg-red-950/40">
-              <p className="font-semibold text-red-800 dark:text-red-200">
-                ⚠️ Sending failed: {result?.errorText || "Check SMTP configuration and retry."}
-              </p>
-            </div>
+          {result?.statusText === "sent" && (
+            <p className="text-xs text-green-600 dark:text-green-400">
+              Email sent successfully
+              {result.mode ? ` (${result.mode})` : ""}
+              {result.messageId ? ` · ID: ${result.messageId}` : ""}
+            </p>
           )}
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={onClose} className="w-full sm:w-auto">
+
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={onClose}>
               Cancel
             </Button>
             <Button
               onClick={send}
-              disabled={wardId === null || !emailValid || status === "sending"}
-              className="w-full sm:w-auto bg-red-600 font-semibold text-white hover:bg-red-600/90"
+              disabled={
+                !emailValid ||
+                status === "sending" ||
+                selectedWardId === null ||
+                !activeEvaluation
+              }
             >
-              <Bot className="h-4 w-4" /> {status === "sending" ? "Sending…" : "Send Email Alert"}
+              {status === "sending" ? "Sending…" : "Send Alert"}
             </Button>
           </div>
         </CardContent>

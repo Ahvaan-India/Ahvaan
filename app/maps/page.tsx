@@ -43,6 +43,9 @@ import {
 } from "@/components/map/KolkataMap";
 import { getWardLocality } from "@/lib/geo/wardNames";
 import { WardInfoBar } from "@/components/console/WardInfoBar";
+import { WardAdviceCard } from "@/components/console/WardAdviceCard";
+import { WardMetricsGrid } from "@/components/console/WardMetricsGrid";
+import { WardForecastStrip } from "@/components/console/WardForecastStrip";
 import {
   Select,
   SelectContent,
@@ -404,298 +407,64 @@ function WardDetailBody({
           </div>
         )}
       </div>
-      <div>
-        <SectionLabel>HTSI & Mortality</SectionLabel>
-        <div className="grid grid-cols-2 gap-2">
-          <Card className="overflow-hidden border-2 border-primary/20 shadow-sm">
-            <div className="h-2 bg-gradient-to-r from-teal-500 via-orange-500 to-red-600" />
-            <CardContent className="p-3">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1">
-                <Flame className="h-3 w-3 text-red-500" /> HTSI
-              </p>
-              <p className="text-3xl font-black tabular-nums">
-                {htsiVal !== null ? htsiVal.toFixed(2) : "-"}
-              </p>
-              <p className="text-xs font-medium text-muted-foreground">
-                {htsiVal !== null
-                  ? htsiVal >= 80
-                    ? "Extreme Thermal Stress"
-                    : htsiVal >= 60
-                      ? "High Thermal Stress"
-                      : htsiVal >= 30
-                        ? "Moderate Thermal Stress"
-                        : "Low Thermal Stress"
-                  : (telemetry?.risk?.displayCategory ?? "")}
-              </p>
-            </CardContent>
-          </Card>
-          {(() => {
-            const r = telemetry.risk;
-            if (!r) return null;
-            const mort = computeMortalityIndex({
-              heatIndex: r.heatIndex,
-              nighttimeRecovery: r.recovery,
-              persistence: r.persistence,
-              vulnerability: r.vulnerability,
-            });
-            return (
-              <Card>
-                <CardContent className="p-3">
-                  <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <HeartPulse className="h-3 w-3 text-green-500" /> Mortality
-                  </p>
-                  <p className="text-3xl font-black tabular-nums">
-                    {mort.index}
-                    <span className="text-sm font-semibold text-muted-foreground">/100</span>
-                  </p>
-                  <p className="text-xs text-muted-foreground">{mort.band}</p>
-                </CardContent>
-              </Card>
-            );
-          })()}
-        </div>
-        {/* Heat Risk Category badge (moved from header to here) */}
-        {(() => {
-          const cellWithHourValues = activeCell
-            ? {
-                ...activeCell,
-                thermal: htsiVal ?? activeCell.thermal,
-                wbgt: wbgtVal ?? activeCell.wbgt,
-                heatIndex: hiVal ?? activeCell.heatIndex,
-                utci: utciVal ?? activeCell.utci,
-                temp: tempVal ?? activeCell.temp,
-                humidity: humidityVal ?? activeCell.humidity,
-                wind: windVal ?? activeCell.wind,
-                solar: solarVal ?? activeCell.solar,
-              }
-            : null;
+        {/* Heat Risk Category badge & Dynamic Layer Advice Card */}
+        <WardAdviceCard
+          currentCategory={currentCategory}
+          activeLayerStep={
+            activeCell
+              ? layerStepFor(
+                  {
+                    ...activeCell,
+                    thermal: htsiVal ?? activeCell.thermal,
+                    wbgt: wbgtVal ?? activeCell.wbgt,
+                    heatIndex: hiVal ?? activeCell.heatIndex,
+                    utci: utciVal ?? activeCell.utci,
+                    temp: tempVal ?? activeCell.temp,
+                    humidity: humidityVal ?? activeCell.humidity,
+                    wind: windVal ?? activeCell.wind,
+                    solar: solarVal ?? activeCell.solar,
+                  } as MapWard,
+                  layer,
+                )
+              : null
+          }
+          layer={layer as MapLayer}
+          wbgtVal={wbgtVal}
+          hiVal={hiVal}
+          utciVal={utciVal}
+          tempVal={tempVal}
+          humidityVal={humidityVal}
+          htsiVal={htsiVal}
+        />
 
-          const activeLayerStep = cellWithHourValues
-            ? layerStepFor(cellWithHourValues as MapWard, layer)
-            : null;
+      {/* Heat Metrics, Microclimate, and Demographics Grid */}
+      <WardMetricsGrid
+        htsiVal={htsiVal}
+        wbgtVal={wbgtVal}
+        hiVal={hiVal}
+        utciVal={utciVal}
+        exposureVal={exposureVal}
+        tempVal={tempVal}
+        humidityVal={humidityVal}
+        windVal={windVal}
+        solarVal={solarVal}
+        vulnVal={vulnVal}
+        totalPopulation={
+          typeof telemetry?.demographics?.totalPopulation === "number" &&
+          telemetry.demographics.totalPopulation > 0
+            ? telemetry.demographics.totalPopulation
+            : typeof activeCell?.population === "number" && activeCell.population > 0
+              ? activeCell.population
+              : null
+        }
+        telemetryRisk={telemetry?.risk}
+        wbgtSim={wbgtSim}
+        hiSim={hiSim}
+        wbgtSource={wbgtSource}
+        hiSource={hiSource}
+      />
 
-          const catKey: RiskCategoryKey =
-            layer === "risk"
-              ? ((currentCategory === "EXTREME" ? "VERY_HIGH" : (currentCategory ?? "LOW")) as RiskCategoryKey)
-              : activeLayerStep === 5
-                ? "VERY_HIGH"
-                : activeLayerStep === 4
-                  ? "HIGH"
-                  : activeLayerStep === 2 || activeLayerStep === 3
-                    ? "MODERATE"
-                    : "LOW";
-
-          const categoryName =
-            catKey === "VERY_HIGH"
-              ? "Extreme"
-              : catKey === "HIGH"
-                ? "High"
-                : catKey === "MODERATE"
-                  ? "Moderate"
-                  : "Low";
-
-          const stepColor =
-            activeLayerStep !== null && activeLayerStep !== undefined
-              ? riskFillForStep(activeLayerStep)
-              : riskFillForCategory(catKey);
-
-          const layerLabel =
-            layer === "wbgt"
-              ? "WBGT"
-              : layer === "hi"
-                ? "Heat Index"
-                : layer === "utci"
-                  ? "UTCI"
-                  : layer === "temp"
-                    ? "Temperature"
-                    : layer === "humidity"
-                      ? "Humidity"
-                      : layer === "wind"
-                        ? "Wind Speed"
-                        : layer === "solar"
-                          ? "Solar Radiation"
-                          : layer === "thermal"
-                            ? "Thermal / HTSI"
-                            : "Heat Risk";
-
-          const valText =
-            layer === "wbgt" && typeof wbgtVal === "number"
-              ? ` (WBGT ${wbgtVal.toFixed(1)}°C)`
-              : layer === "hi" && typeof hiVal === "number"
-                ? ` (Heat Index ${hiVal.toFixed(1)}°C)`
-                : layer === "utci" && typeof utciVal === "number"
-                  ? ` (UTCI ${utciVal.toFixed(1)}°C)`
-                  : layer === "temp" && typeof tempVal === "number"
-                    ? ` (Temp ${tempVal.toFixed(1)}°C)`
-                    : layer === "humidity" && typeof humidityVal === "number"
-                      ? ` (Humidity ${humidityVal.toFixed(0)}%)`
-                      : layer === "thermal" && typeof htsiVal === "number"
-                        ? ` (HTSI ${htsiVal.toFixed(1)})`
-                        : "";
-
-          const advice =
-            catKey === "VERY_HIGH"
-              ? {
-                  Icon: Flame,
-                  head: `${categoryName} Advisory - Immediate Action Required`,
-                  body: `Extreme thermal stress detected under ${layerLabel} layer${valText}. Avoid peak outdoor exposure 11am–4pm, open emergency cooling shelters, enforce hydration protocols for outdoor workers, and monitor senior citizens hourly.`,
-                }
-              : catKey === "HIGH"
-                ? {
-                    Icon: Activity,
-                    head: `${categoryName} Warning - Limit Exposure`,
-                    body: `High level conditions detected under ${layerLabel} layer${valText}. Restrict strenuous outdoor labor, schedule mandatory shade breaks, ensure accessible clean drinking water, and watch for symptoms of heat exhaustion.`,
-                  }
-                : catKey === "MODERATE"
-                  ? {
-                      Icon: Sun,
-                      head: `${categoryName} Caution - Stay Hydrated`,
-                      body: `Moderate level conditions detected under ${layerLabel} layer${valText}. Increase fluid intake, wear light breathable clothing, limit direct sun exposure during afternoon peak hours, and check on vulnerable populations.`,
-                    }
-                  : {
-                      Icon: Users,
-                      head: `${categoryName} Conditions - Standard Awareness`,
-                      body: `Low risk conditions under ${layerLabel} layer${valText}. Maintain regular activities, stay hydrated, and follow standard municipal heat safety guidelines.`,
-                    };
-
-          return (
-            <>
-              {(displayCell || telemetry?.risk || activeEntry) && (
-                <div className="mt-3">
-                  <SectionLabel>
-                    <span className="flex items-center gap-1.5">
-                      <RiskBadge
-                        category={currentCategory}
-                        step={activeLayerStep}
-                      />
-                      <span className="text-xs text-muted-foreground">{layerLabel} Category</span>
-                    </span>
-                  </SectionLabel>
-                </div>
-              )}
-              <div className="mt-3">
-                <div
-                  className={cn("rounded-xl border p-3.5 transition-colors", riskPanelClass(catKey))}
-                >
-                  <p className="flex items-center gap-2 text-xs font-extrabold tracking-tight">
-                    <advice.Icon
-                      className="h-4 w-4 shrink-0"
-                      style={{ color: stepColor }}
-                      aria-hidden
-                    />
-                    <span>{advice.head}</span>
-                  </p>
-                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground font-medium">
-                    {advice.body}
-                  </p>
-                </div>
-              </div>
-            </>
-          );
-        })()}
-      </div>
-      <div>
-        <SectionLabel>
-          <span className="flex items-center gap-1.5">Heat Metrics</span>
-        </SectionLabel>
-        <div className="grid grid-cols-2 gap-2">
-          <SubCard
-            icon={Thermometer}
-            label="WBGT"
-            value={fmtVal(wbgtVal, 1)}
-            unit="°C"
-            tooltip={METRIC_EXPLANATIONS.wbgt}
-            accuracyBadge={{
-              value: `${wbgtSim}%`,
-              tooltip: `Cross-model accuracy check: comparing Ahvaan calculations with ${wbgtSource} to verify accuracy.`,
-            }}
-          />
-          <SubCard
-            icon={Flame}
-            label="Heat Index"
-            value={fmtVal(hiVal, 1)}
-            unit="°C"
-            tooltip={METRIC_EXPLANATIONS.heatIndex}
-            accuracyBadge={{
-              value: `${hiSim}%`,
-              tooltip: `Cross-model accuracy check: comparing Ahvaan calculations with ${hiSource} to verify accuracy.`,
-            }}
-          />
-          <SubCard
-            icon={Sun}
-            label="UTCI"
-            value={fmtVal(utciVal, 1)}
-            unit="°C"
-            tooltip={METRIC_EXPLANATIONS.utci}
-          />
-          <SubCard
-            icon={Activity}
-            label="Thermal Stress"
-            value={fmtVal(htsiVal, 2)}
-            tooltip={METRIC_EXPLANATIONS.thermal}
-          />
-        </div>
-      </div>
-      <div>
-        <SectionLabel>Microclimate</SectionLabel>
-        <div className="grid grid-cols-2 gap-2">
-          <SubCard
-            icon={Thermometer}
-            label="Temp"
-            value={fmtVal(tempVal, 1)}
-            unit="°C"
-            tooltip={METRIC_EXPLANATIONS.thermal}
-          />
-          <SubCard
-            icon={Droplet}
-            label="Humidity"
-            value={fmtVal(humidityVal, 0)}
-            unit="%"
-            tooltip="Relative Humidity (%): Moisture level in the ambient air."
-          />
-          <SubCard
-            icon={Wind}
-            label="Wind"
-            value={fmtVal(windVal, 1)}
-            unit="m/s"
-            tooltip="Wind Velocity (m/s): Air movement speed helping heat dissipation."
-          />
-          <SubCard
-            icon={Sun}
-            label="Solar"
-            value={fmtVal(solarVal, 0)}
-            unit="W/m²"
-            tooltip="Solar Radiation (W/m²): Direct solar heat load."
-          />
-        </div>
-      </div>
-      <div>
-        <SectionLabel>Demographics & Population</SectionLabel>
-        <div className="grid grid-cols-2 gap-2">
-          <SubCard
-            icon={Users}
-            label="Population"
-            value={
-              typeof telemetry?.demographics?.totalPopulation === "number" && telemetry.demographics.totalPopulation > 0
-                ? telemetry.demographics.totalPopulation.toLocaleString("en-IN")
-                : typeof activeCell?.population === "number" && activeCell.population > 0
-                  ? activeCell.population.toLocaleString("en-IN")
-                  : "-"
-            }
-            tooltip="Total estimated census population for this ward."
-          />
-          <SubCard
-            icon={Users}
-            label="Outdoor Workers"
-            value={
-              typeof telemetry?.demographics?.outdoorWorkerPct === "number" && telemetry.demographics.outdoorWorkerPct > 0
-                ? `${(telemetry.demographics.outdoorWorkerPct * 100).toFixed(0)}%`
-                : "-"
-            }
-            tooltip="Estimated proportion of outdoor workers exposed to heat."
-          />
-        </div>
-      </div>
+      {/* Next 24 Hours Hourly Chart */}
       {next24h.length > 1 && (
         <div className="min-w-0">
           <SectionLabel>Next 24 hours</SectionLabel>
@@ -763,116 +532,9 @@ function WardDetailBody({
           </Card>
         </div>
       )}
-      {forecast?.days?.length ? (
-        <div>
-          <SectionLabel>Next 5 Days Forecast</SectionLabel>
-          <div className="custom-scrollbar flex gap-2.5 overflow-x-auto overscroll-x-contain pb-3 snap-x snap-mandatory -mx-1 px-1">
-            {forecast.days.slice(0, 5).map((d: any, i: number) => {
-              const scDay = showcase?.days?.find((s: any) => s.forecastDate === d.date) ?? showcase?.days?.[i] ?? null;
-              const scSum = scDay?.summary ?? null;
-              const utciVal = d.utciMax ?? scSum?.utciMax ?? null;
-              const humidityVal = scSum?.humidityAvg ?? null;
-              const windVal = scSum?.windAvg ?? null;
-              const solarVal = scSum?.solarAvg ?? null;
-              const htsiVal = d.htsiMax ?? scSum?.htsiMax ?? (typeof d.risk === "number" ? d.risk * 100 : null);
 
-              return (
-                <div
-                  key={d.date}
-                  className={`flex min-w-[310px] snap-start flex-col gap-2.5 rounded-xl border p-3.5 shadow-xs transition-shadow hover:shadow-sm ${i === 0 ? "bg-primary/5 border-primary/20" : "bg-card"}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-xs font-bold text-foreground">
-                        {new Date(d.date).toLocaleDateString("en-IN", {
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {i === 0
-                          ? "Today"
-                          : new Date(d.date).toLocaleDateString("en-IN", {
-                              weekday: "short",
-                            })}
-                      </p>
-                    </div>
-                    <RiskBadge category={d.category} />
-                  </div>
-
-                  {/* 4x2 Grid showing ALL forecast heat metrics & microclimate */}
-                  <div className="grid grid-cols-4 gap-1.5 text-center">
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">Temp</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {d.tempMax?.toFixed(0) ?? "-"}°
-                        <span className="text-[10px] font-normal text-muted-foreground">
-                          /{d.tempMin?.toFixed(0) ?? "-"}°
-                        </span>
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">WBGT</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {d.wbgtMax ? `${d.wbgtMax.toFixed(1)}°` : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">HI</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {d.heatIndexMax ? `${d.heatIndexMax.toFixed(1)}°` : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">UTCI</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {utciVal ? `${Number(utciVal).toFixed(1)}°` : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">Humidity</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {humidityVal ? `${Number(humidityVal).toFixed(0)}%` : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">Wind</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {windVal ? `${Number(windVal).toFixed(1)}m/s` : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">Solar</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {solarVal ? `${Number(solarVal).toFixed(0)}W` : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-lg bg-muted/40 p-1.5">
-                      <p className="text-[10px] font-semibold text-muted-foreground">HTSI</p>
-                      <p className="text-xs font-bold tabular-nums">
-                        {htsiVal ? Number(htsiVal).toFixed(1) : "-"}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-0.5 text-xs">
-                    <span className="font-semibold text-muted-foreground">
-                      Mortality Risk
-                    </span>
-                    {d.mortality ? (
-                      <span className="flex items-center gap-1 font-bold text-foreground">
-                        <HeartPulse className="h-3.5 w-3.5 text-red-500" /> {d.mortality.index}/100 ({d.mortality.band})
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
+      {/* 5-Day Forecast Strip */}
+      <WardForecastStrip forecast={forecast} showcase={showcase} />
     </div>
   );
 }
@@ -1377,6 +1039,11 @@ export default function MapsPage() {
           tempMax: d.tempMax,
           risk: d.risk,
           category: d.category,
+        }))}
+        wards={cells.map((c: any) => ({
+          ward: c.ward,
+          wardName: c.wardName,
+          wardId: c.wardId,
         }))}
       />
     </div>
