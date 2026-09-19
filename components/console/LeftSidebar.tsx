@@ -1,20 +1,31 @@
 "use client";
 
-import { Layers, Filter, Map as MapIcon, EyeOff, Flame, Thermometer, Sun, Users, Shield } from "lucide-react";
+import { Layers, Filter, Map as MapIcon, EyeOff, Flame, Thermometer, Sun, Wind, Droplet } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { RISK_COLORS } from "@/components/map/KolkataMap";
 
-export type MapLayer = "thermal" | "wbgt" | "hi" | "exposure" | "vulnerability";
+export type MapLayer =
+  | "thermal"
+  | "wbgt"
+  | "hi"
+  | "utci"
+  | "temp"
+  | "humidity"
+  | "wind"
+  | "solar";
 
 const LAYERS: Array<{ id: MapLayer; label: string; icon: LucideIcon; desc: string }> = [
-  { id: "thermal", label: "HTSI / Thermal", icon: Thermometer, desc: "Heat index" },
+  { id: "thermal", label: "HTSI / Thermal", icon: Thermometer, desc: "0–100" },
   { id: "wbgt", label: "WBGT", icon: Sun, desc: "°C shade" },
-  { id: "hi", label: "Heat Index", icon: Thermometer, desc: "°C feels-like" },
-  { id: "exposure", label: "Exposure", icon: Users, desc: "Pop density" },
-  { id: "vulnerability", label: "Vulnerability", icon: Shield, desc: "0–1" },
+  { id: "hi", label: "Heat Index", icon: Flame, desc: "°C feels-like" },
+  { id: "utci", label: "UTCI", icon: Sun, desc: "°C climate" },
+  { id: "temp", label: "Temp", icon: Thermometer, desc: "°C air" },
+  { id: "humidity", label: "Humidity", icon: Droplet, desc: "% relative" },
+  { id: "wind", label: "Wind", icon: Wind, desc: "m/s speed" },
+  { id: "solar", label: "Solar", icon: Sun, desc: "W/m² radiation" },
 ];
 
 export function LeftSidebar({

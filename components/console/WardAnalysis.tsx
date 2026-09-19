@@ -24,7 +24,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { SubCard } from "@/components/console/SubCard";
-import { AccuracyComparison } from "@/components/console/AccuracyComparison";
 import { getWardDisplayName } from "@/lib/geo/wardNames";
 import { riskFillForCategory } from "@/lib/risk";
 import { ChartTooltip } from "@/components/console/ChartTooltip";
@@ -391,13 +390,6 @@ export function WardAnalysis({
         </Card>
       )}
 
-      {/* Index Accuracy & Reference Validation */}
-      <AccuracyComparison
-        wardId={ward ?? wardId}
-        wbgt={enginePeaks?.wbgt?.v ?? 30.5}
-        hi={enginePeaks?.hi?.v ?? 37.2}
-        date={todayEngine?.forecastDate}
-      />
     </div>
   );
 }

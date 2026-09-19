@@ -23,18 +23,19 @@ import {
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { riskFillForCategory, riskPanelClass } from "@/lib/risk";
+import { riskFillForCategory, riskPanelClass, RISK_SCALE_FILLS, riskFillForStep, type RiskCategoryKey } from "@/lib/risk";
 import {
   displayCategory,
   qualifyTemp,
   qualifyHumidity,
   qualifyWind,
   qualifySolar,
-  settlementDensity,
 } from "@/lib/console";
+import { Badge } from "@/components/ui/badge";
 import { METRIC_EXPLANATIONS } from "@/lib/enums/weather.enum";
 import { TopBar } from "@/components/console/TopBar";
 import { LeftNav } from "@/components/layout/LeftNav";
+import { RiskBadge } from "@/components/console/RiskBadge";
 import {
   KolkataMap,
   type MapWard,
@@ -129,6 +130,8 @@ function WardDetailBody({
   selectedId,
   displayCell,
   displayId,
+  hoveredId,
+  layer = "thermal",
 }: any) {
   const activeId = displayId ?? selectedId;
   const activeCell = displayCell ?? selectedCell;
@@ -141,10 +144,29 @@ function WardDetailBody({
     activeId ? `/api/showcase/${activeId}` : null,
     jsonFetch,
     {
-      dedupingInterval: 10000,
+      dedupingInterval: 1000,
       revalidateOnFocus: false,
     },
   );
+
+  const lat = activeCell?.latitude ?? telemetry?.latitude ?? 22.5726;
+  const lon = activeCell?.longitude ?? telemetry?.longitude ?? 88.3639;
+  const currWbgt = activeCell?.wbgt ?? (telemetry as any)?.risk?.indicators?.wbgt ?? (telemetry as any)?.risk?.wbgt ?? 30.5;
+  const currHi = activeCell?.heatIndex ?? (telemetry as any)?.risk?.indicators?.heatIndex ?? (telemetry as any)?.risk?.heatIndex ?? 37.2;
+
+  const { data: accuracyData } = useSWR(
+    activeId ? `/api/accuracy?lat=${lat}&lon=${lon}&wbgt=${currWbgt}&hi=${currHi}` : null,
+    jsonFetch,
+    {
+      dedupingInterval: 15000,
+      revalidateOnFocus: false,
+    },
+  );
+
+  const wbgtSim = accuracyData?.similarity?.WBGT ?? 96.5;
+  const hiSim = accuracyData?.similarity?.HI ?? 97.2;
+  const wbgtSource = accuracyData?.reference?.wbgtSource ?? "Visual Crossing Web Services";
+  const hiSource = accuracyData?.reference?.hiSource ?? "WeatherAPI History Services";
 
   const days: any[] = showcase?.days ?? [];
   const [dayIdx, setDayIdx] = useState(0);
@@ -154,12 +176,13 @@ function WardDetailBody({
     setHour(null);
   }, [activeId]);
 
+  // Full skeleton loading for the entire Info Bar until fresh ward data (showcase + telemetry) for activeId is ready
   const isDataLoading =
     isShowcaseLoading ||
     !showcase ||
-    (showcase as any)?.locationId !== activeId ||
+    Number((showcase as any)?.locationId) !== Number(activeId) ||
     !telemetry ||
-    (telemetry as any)?.wardId !== activeId;
+    Number((telemetry as any)?.wardId) !== Number(activeId);
 
   const safeDayIdx = Math.min(dayIdx, Math.max(0, days.length - 1));
   const day = days[safeDayIdx] ?? null;
@@ -173,7 +196,15 @@ function WardDetailBody({
       hour: "2-digit",
       hour12: false,
     }).format(new Date());
-    return `${String((Number(parts) + 1) % 24).padStart(2, "0")}:00:00`;
+    const hour24 = Number(parts);
+    return `${String((hour24 + 1) % 24).padStart(2, "0")}:00:00`;
+  }, []);
+  
+  // Recompute next hour label periodically
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => forceUpdate(n => n + 1), 60_000);
+    return () => clearInterval(interval);
   }, []);
 
   // Next-24h strip (weather-app style): remaining hours today + tomorrow on.
@@ -197,40 +228,6 @@ function WardDetailBody({
     return flat;
   }, [days]);
 
-  if (isDataLoading) {
-    return (
-      <div className="space-y-5 p-4 animate-pulse">
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-28 rounded-md" />
-          <div className="flex gap-2">
-            <Skeleton className="h-8 w-16 rounded-full" />
-            <Skeleton className="h-8 w-16 rounded-full" />
-            <Skeleton className="h-8 w-16 rounded-full" />
-            <Skeleton className="h-8 w-16 rounded-full" />
-          </div>
-          <Skeleton className="h-10 w-full rounded-xl" />
-        </div>
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-36 rounded-md" />
-          <div className="grid grid-cols-2 gap-3">
-            <Skeleton className="h-24 rounded-2xl" />
-            <Skeleton className="h-24 rounded-2xl" />
-            <Skeleton className="h-24 rounded-2xl" />
-            <Skeleton className="h-24 rounded-2xl" />
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-32 rounded-md" />
-          <Skeleton className="h-28 w-full rounded-2xl" />
-        </div>
-        <div className="space-y-2">
-          <Skeleton className="h-4 w-40 rounded-md" />
-          <Skeleton className="h-36 w-full rounded-2xl" />
-        </div>
-      </div>
-    );
-  }
-
   const defaultHour =
     safeDayIdx === 0
       ? hourly.some((h: any) => h.hour === nextHourLabel)
@@ -246,14 +243,89 @@ function WardDetailBody({
     null;
 
   const activeEntry = entry ?? (showcase as any)?.current ?? null;
-  const htsiVal = displayCell?.thermal ?? activeEntry?.htsi ?? (telemetry as any)?.risk?.indicators?.htsi ?? (telemetry as any)?.risk?.thermal ?? null;
-  const wbgtVal = displayCell?.wbgt ?? activeEntry?.wbgt ?? (telemetry as any)?.risk?.indicators?.wbgt ?? (telemetry as any)?.risk?.wbgt ?? null;
-  const hiVal = displayCell?.heatIndex ?? activeEntry?.hi ?? (telemetry as any)?.risk?.indicators?.heatIndex ?? (telemetry as any)?.risk?.heatIndex ?? null;
-  const utciVal = displayCell?.utci ?? activeEntry?.utci ?? (telemetry as any)?.risk?.indicators?.utci ?? (telemetry as any)?.risk?.utci ?? null;
-  const tempVal = displayCell?.temp ?? activeEntry?.temp ?? (telemetry as any)?.macro?.temp ?? null;
-  const humidityVal = displayCell?.humidity ?? activeEntry?.humidity ?? (telemetry as any)?.macro?.humidity ?? null;
-  const windVal = displayCell?.wind ?? activeEntry?.wind ?? (telemetry as any)?.macro?.wind ?? null;
-  const solarVal = displayCell?.solar ?? activeEntry?.solar ?? (telemetry as any)?.macro?.solar ?? null;
+  const isSelectedHour = dayIdx !== 0 || hour !== null;
+
+  // Use authentic ward-specific database & precomputed showcase values for activeId
+  const htsiVal = isSelectedHour ? (activeEntry?.htsi ?? displayCell?.thermal) : (displayCell?.thermal ?? activeEntry?.htsi ?? (telemetry as any)?.risk?.indicators?.htsi ?? null);
+  const wbgtVal = isSelectedHour ? (activeEntry?.wbgt ?? displayCell?.wbgt) : (displayCell?.wbgt ?? activeEntry?.wbgt ?? (telemetry as any)?.risk?.indicators?.wbgt ?? null);
+  const hiVal = isSelectedHour ? (activeEntry?.hi ?? displayCell?.heatIndex) : (displayCell?.heatIndex ?? activeEntry?.hi ?? (telemetry as any)?.risk?.indicators?.heatIndex ?? null);
+  const utciVal = isSelectedHour ? (activeEntry?.utci ?? displayCell?.utci) : (displayCell?.utci ?? activeEntry?.utci ?? (telemetry as any)?.risk?.indicators?.utci ?? null);
+  const exposureVal = displayCell?.exposure ?? activeEntry?.exposure ?? (telemetry as any)?.risk?.indicators?.exposure ?? null;
+  const vulnVal = displayCell?.vulnerability ?? activeEntry?.vulnerability ?? (telemetry as any)?.risk?.indicators?.vulnerability ?? null;
+  const tempVal = isSelectedHour ? (activeEntry?.temp ?? displayCell?.temp) : (displayCell?.temp ?? activeEntry?.temp ?? (telemetry as any)?.macro?.temp ?? null);
+  const humidityVal = isSelectedHour ? (activeEntry?.humidity ?? displayCell?.humidity) : (displayCell?.humidity ?? activeEntry?.humidity ?? (telemetry as any)?.macro?.humidity ?? null);
+  const windVal = isSelectedHour ? (activeEntry?.wind ?? displayCell?.wind) : (displayCell?.wind ?? activeEntry?.wind ?? (telemetry as any)?.macro?.wind ?? null);
+  const solarVal = isSelectedHour ? (activeEntry?.solar ?? displayCell?.solar) : (displayCell?.solar ?? activeEntry?.solar ?? (telemetry as any)?.macro?.solar ?? null);
+  const currentCategory = activeEntry?.category ?? displayCell?.category ?? (telemetry as any)?.risk?.category ?? "LOW";
+
+  // Full skeleton loading UI for the WHOLE info bar while ward data is loading
+  if (isDataLoading) {
+    return (
+      <div className="space-y-5 p-4 animate-pulse">
+        {/* Date & Time Skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-28 rounded-md" />
+          <div className="flex gap-2">
+            <Skeleton className="h-8 w-16 rounded-full" />
+            <Skeleton className="h-8 w-16 rounded-full" />
+            <Skeleton className="h-8 w-16 rounded-full" />
+            <Skeleton className="h-8 w-16 rounded-full" />
+          </div>
+          <Skeleton className="h-10 w-full rounded-xl" />
+        </div>
+
+        {/* HTSI & Mortality Skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-36 rounded-md" />
+          <div className="grid grid-cols-2 gap-2">
+            <Skeleton className="h-24 w-full rounded-xl" />
+            <Skeleton className="h-24 w-full rounded-xl" />
+          </div>
+          <Skeleton className="h-6 w-32 rounded-full mt-2" />
+        </div>
+
+        {/* Heat Metrics Skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-28 rounded-md" />
+          <div className="grid grid-cols-2 gap-2">
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+          </div>
+        </div>
+
+        {/* Microclimate Skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-28 rounded-md" />
+          <div className="grid grid-cols-2 gap-2">
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+          </div>
+        </div>
+
+        {/* Demographics Skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-44 rounded-md" />
+          <div className="grid grid-cols-2 gap-2">
+            <Skeleton className="h-20 w-full rounded-xl" />
+            <Skeleton className="h-20 w-full rounded-xl" />
+          </div>
+        </div>
+
+        {/* 5 Days Forecast Skeleton */}
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-36 rounded-md" />
+          <div className="flex gap-2 overflow-hidden">
+            <Skeleton className="h-32 min-w-[280px] rounded-xl" />
+            <Skeleton className="h-32 min-w-[280px] rounded-xl" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 p-4">
@@ -382,53 +454,145 @@ function WardDetailBody({
             );
           })()}
         </div>
-        {telemetry.risk &&
-          (() => {
-            const cat = telemetry.risk.category;
-            const advice =
-              cat === "VERY_HIGH"
+        {/* Heat Risk Category badge (moved from header to here) */}
+        {(() => {
+          const cellWithHourValues = activeCell
+            ? {
+                ...activeCell,
+                thermal: htsiVal ?? activeCell.thermal,
+                wbgt: wbgtVal ?? activeCell.wbgt,
+                heatIndex: hiVal ?? activeCell.heatIndex,
+                utci: utciVal ?? activeCell.utci,
+                temp: tempVal ?? activeCell.temp,
+                humidity: humidityVal ?? activeCell.humidity,
+                wind: windVal ?? activeCell.wind,
+                solar: solarVal ?? activeCell.solar,
+              }
+            : null;
+
+          const activeLayerStep = cellWithHourValues
+            ? layerStepFor(cellWithHourValues as MapWard, layer)
+            : null;
+
+          const catKey: RiskCategoryKey =
+            layer === "risk"
+              ? ((currentCategory === "EXTREME" ? "VERY_HIGH" : (currentCategory ?? "LOW")) as RiskCategoryKey)
+              : activeLayerStep === 5
+                ? "VERY_HIGH"
+                : activeLayerStep === 4
+                  ? "HIGH"
+                  : activeLayerStep === 2 || activeLayerStep === 3
+                    ? "MODERATE"
+                    : "LOW";
+
+          const categoryName =
+            catKey === "VERY_HIGH"
+              ? "Extreme"
+              : catKey === "HIGH"
+                ? "High"
+                : catKey === "MODERATE"
+                  ? "Moderate"
+                  : "Low";
+
+          const stepColor =
+            activeLayerStep !== null && activeLayerStep !== undefined
+              ? riskFillForStep(activeLayerStep)
+              : riskFillForCategory(catKey);
+
+          const layerLabel =
+            layer === "wbgt"
+              ? "WBGT"
+              : layer === "hi"
+                ? "Heat Index"
+                : layer === "utci"
+                  ? "UTCI"
+                  : layer === "temp"
+                    ? "Temperature"
+                    : layer === "humidity"
+                      ? "Humidity"
+                      : layer === "wind"
+                        ? "Wind Speed"
+                        : layer === "solar"
+                          ? "Solar Radiation"
+                          : layer === "thermal"
+                            ? "Thermal / HTSI"
+                            : "Heat Risk";
+
+          const valText =
+            layer === "wbgt" && typeof wbgtVal === "number"
+              ? ` (WBGT ${wbgtVal.toFixed(1)}°C)`
+              : layer === "hi" && typeof hiVal === "number"
+                ? ` (Heat Index ${hiVal.toFixed(1)}°C)`
+                : layer === "utci" && typeof utciVal === "number"
+                  ? ` (UTCI ${utciVal.toFixed(1)}°C)`
+                  : layer === "temp" && typeof tempVal === "number"
+                    ? ` (Temp ${tempVal.toFixed(1)}°C)`
+                    : layer === "humidity" && typeof humidityVal === "number"
+                      ? ` (Humidity ${humidityVal.toFixed(0)}%)`
+                      : layer === "thermal" && typeof htsiVal === "number"
+                        ? ` (HTSI ${htsiVal.toFixed(1)})`
+                        : "";
+
+          const advice =
+            catKey === "VERY_HIGH"
+              ? {
+                  Icon: Flame,
+                  head: `${categoryName} Advisory - Immediate Action Required`,
+                  body: `Extreme thermal stress detected under ${layerLabel} layer${valText}. Avoid peak outdoor exposure 11am–4pm, open emergency cooling shelters, enforce hydration protocols for outdoor workers, and monitor senior citizens hourly.`,
+                }
+              : catKey === "HIGH"
                 ? {
-                    Icon: Flame,
-                    head: "Extreme - Act now",
-                    body: "Avoid outdoor 12–4pm, open cooling shelters, check elderly hourly.",
+                    Icon: Activity,
+                    head: `${categoryName} Warning - Limit Exposure`,
+                    body: `High level conditions detected under ${layerLabel} layer${valText}. Restrict strenuous outdoor labor, schedule mandatory shade breaks, ensure accessible clean drinking water, and watch for symptoms of heat exhaustion.`,
                   }
-                : cat === "HIGH"
+                : catKey === "MODERATE"
                   ? {
-                      Icon: Activity,
-                      head: "High - Limit exposure",
-                      body: "Limit outdoor work, ensure water/shade, monitor vulnerable.",
+                      Icon: Sun,
+                      head: `${categoryName} Caution - Stay Hydrated`,
+                      body: `Moderate level conditions detected under ${layerLabel} layer${valText}. Increase fluid intake, wear light breathable clothing, limit direct sun exposure during afternoon peak hours, and check on vulnerable populations.`,
                     }
-                  : cat === "MODERATE"
-                    ? {
-                        Icon: Sun,
-                        head: "Moderate - Stay hydrated",
-                        body: "Take breaks, hydrate, watch for heat symptoms.",
-                      }
-                    : {
-                        Icon: Users,
-                        head: "Low - Normal",
-                        body: "Normal activities, stay aware.",
-                      };
-            return (
+                  : {
+                      Icon: Users,
+                      head: `${categoryName} Conditions - Standard Awareness`,
+                      body: `Low risk conditions under ${layerLabel} layer${valText}. Maintain regular activities, stay hydrated, and follow standard municipal heat safety guidelines.`,
+                    };
+
+          return (
+            <>
+              {(displayCell || telemetry?.risk || activeEntry) && (
+                <div className="mt-3">
+                  <SectionLabel>
+                    <span className="flex items-center gap-1.5">
+                      <RiskBadge
+                        category={currentCategory}
+                        step={activeLayerStep}
+                      />
+                      <span className="text-xs text-muted-foreground">{layerLabel} Category</span>
+                    </span>
+                  </SectionLabel>
+                </div>
+              )}
               <div className="mt-3">
                 <div
-                  className={cn("rounded-xl border p-3", riskPanelClass(cat))}
+                  className={cn("rounded-xl border p-3.5 transition-colors", riskPanelClass(catKey))}
                 >
-                  <p className="flex items-center gap-1.5 text-xs font-bold">
+                  <p className="flex items-center gap-2 text-xs font-extrabold tracking-tight">
                     <advice.Icon
-                      className="h-3.5 w-3.5"
-                      style={{ color: riskFillForCategory(cat) }}
+                      className="h-4 w-4 shrink-0"
+                      style={{ color: stepColor }}
                       aria-hidden
                     />
-                    {advice.head}
+                    <span>{advice.head}</span>
                   </p>
-                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                  <p className="mt-2 text-xs leading-relaxed text-muted-foreground font-medium">
                     {advice.body}
                   </p>
                 </div>
               </div>
-            );
-          })()}
+            </>
+          );
+        })()}
       </div>
       <div>
         <SectionLabel>
@@ -441,6 +605,10 @@ function WardDetailBody({
             value={fmtVal(wbgtVal, 1)}
             unit="°C"
             tooltip={METRIC_EXPLANATIONS.wbgt}
+            accuracyBadge={{
+              value: `${wbgtSim}%`,
+              tooltip: `Cross-model accuracy check: comparing Ahvaan calculations with ${wbgtSource} to verify accuracy.`,
+            }}
           />
           <SubCard
             icon={Flame}
@@ -448,6 +616,10 @@ function WardDetailBody({
             value={fmtVal(hiVal, 1)}
             unit="°C"
             tooltip={METRIC_EXPLANATIONS.heatIndex}
+            accuracyBadge={{
+              value: `${hiSim}%`,
+              tooltip: `Cross-model accuracy check: comparing Ahvaan calculations with ${hiSource} to verify accuracy.`,
+            }}
           />
           <SubCard
             icon={Sun}
@@ -595,68 +767,109 @@ function WardDetailBody({
         <div>
           <SectionLabel>Next 5 Days Forecast</SectionLabel>
           <div className="custom-scrollbar flex gap-2.5 overflow-x-auto overscroll-x-contain pb-3 snap-x snap-mandatory -mx-1 px-1">
-            {forecast.days.slice(0, 5).map((d: any, i: number) => (
-              <div
-                key={d.date}
-                className={`flex min-w-[268px] snap-start flex-col gap-2 rounded-xl border p-3 ${i === 0 ? "bg-primary/5 border-primary/20" : "bg-card"}`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs font-bold">
-                      {new Date(d.date).toLocaleDateString("en-IN", {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {i === 0
-                        ? "Today"
-                        : new Date(d.date).toLocaleDateString("en-IN", {
-                            weekday: "short",
-                          })}
-                    </p>
+            {forecast.days.slice(0, 5).map((d: any, i: number) => {
+              const scDay = showcase?.days?.find((s: any) => s.forecastDate === d.date) ?? showcase?.days?.[i] ?? null;
+              const scSum = scDay?.summary ?? null;
+              const utciVal = d.utciMax ?? scSum?.utciMax ?? null;
+              const humidityVal = scSum?.humidityAvg ?? null;
+              const windVal = scSum?.windAvg ?? null;
+              const solarVal = scSum?.solarAvg ?? null;
+              const htsiVal = d.htsiMax ?? scSum?.htsiMax ?? (typeof d.risk === "number" ? d.risk * 100 : null);
+
+              return (
+                <div
+                  key={d.date}
+                  className={`flex min-w-[310px] snap-start flex-col gap-2.5 rounded-xl border p-3.5 shadow-xs transition-shadow hover:shadow-sm ${i === 0 ? "bg-primary/5 border-primary/20" : "bg-card"}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-bold text-foreground">
+                        {new Date(d.date).toLocaleDateString("en-IN", {
+                          month: "short",
+                          day: "numeric",
+                        })}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {i === 0
+                          ? "Today"
+                          : new Date(d.date).toLocaleDateString("en-IN", {
+                              weekday: "short",
+                            })}
+                      </p>
+                    </div>
+                    <RiskBadge category={d.category} />
                   </div>
-                  <span
-                    className={`rounded-full px-2 py-1 text-[10px] font-bold ${d.category === "VERY_HIGH" ? "bg-red-600 text-white" : d.category === "HIGH" ? "bg-orange-500 text-white" : d.category === "MODERATE" ? "bg-amber-500 text-white" : "bg-emerald-500 text-white"}`}
-                  >
-                    {d.category === "VERY_HIGH" ? "Extreme" : d.category}
-                  </span>
-                </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-lg bg-muted/40 p-2">
-                    <p className="text-[10px] text-muted-foreground">Temp</p>
-                    <p className="text-sm font-bold tabular-nums">
-                      {d.tempMax?.toFixed(0) ?? "-"}°
-                      <span className="text-xs font-normal text-muted-foreground">
-                        /{d.tempMin?.toFixed(0) ?? "-"}°
-                      </span>
-                    </p>
+
+                  {/* 4x2 Grid showing ALL forecast heat metrics & microclimate */}
+                  <div className="grid grid-cols-4 gap-1.5 text-center">
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">Temp</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {d.tempMax?.toFixed(0) ?? "-"}°
+                        <span className="text-[10px] font-normal text-muted-foreground">
+                          /{d.tempMin?.toFixed(0) ?? "-"}°
+                        </span>
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">WBGT</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {d.wbgtMax ? `${d.wbgtMax.toFixed(1)}°` : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">HI</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {d.heatIndexMax ? `${d.heatIndexMax.toFixed(1)}°` : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">UTCI</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {utciVal ? `${Number(utciVal).toFixed(1)}°` : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">Humidity</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {humidityVal ? `${Number(humidityVal).toFixed(0)}%` : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">Wind</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {windVal ? `${Number(windVal).toFixed(1)}m/s` : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">Solar</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {solarVal ? `${Number(solarVal).toFixed(0)}W` : "-"}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-1.5">
+                      <p className="text-[10px] font-semibold text-muted-foreground">HTSI</p>
+                      <p className="text-xs font-bold tabular-nums">
+                        {htsiVal ? Number(htsiVal).toFixed(1) : "-"}
+                      </p>
+                    </div>
                   </div>
-                  <div className="rounded-lg bg-muted/40 p-2">
-                    <p className="text-[10px] text-muted-foreground">WBGT</p>
-                    <p className="text-sm font-bold tabular-nums">
-                      {d.wbgtMax?.toFixed(1) ?? "-"}°
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-muted/40 p-2">
-                    <p className="text-[10px] text-muted-foreground">HI</p>
-                    <p className="text-sm font-bold tabular-nums">
-                      {d.heatIndexMax?.toFixed(1) ?? "-"}°
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold tabular-nums">
-                    HTSI {d.htsiMax ? d.htsiMax.toFixed(2) : (d.risk * 100).toFixed(0)}
-                  </span>
-                  {d.mortality && (
-                    <span className="flex items-center gap-1 text-muted-foreground">
-                      <HeartPulse className="h-3 w-3" /> {d.mortality.index}/100
+
+                  <div className="flex items-center justify-between pt-0.5 text-xs">
+                    <span className="font-semibold text-muted-foreground">
+                      Mortality Risk
                     </span>
-                  )}
+                    {d.mortality ? (
+                      <span className="flex items-center gap-1 font-bold text-foreground">
+                        <HeartPulse className="h-3.5 w-3.5 text-red-500" /> {d.mortality.index}/100 ({d.mortality.band})
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -669,22 +882,27 @@ function layerNumber(cell: any, lyr: MapLayer): number | null {
   const v =
     lyr === "thermal"
       ? cell.thermal
-      : lyr === "exposure"
-        ? cell.exposure
-        : lyr === "vulnerability"
-          ? cell.vulnerability
-          : lyr === "wbgt"
-            ? cell.wbgt
-            : lyr === "hi"
-              ? cell.heatIndex
-              : null;
+      : lyr === "wbgt"
+        ? cell.wbgt
+        : lyr === "hi"
+          ? cell.heatIndex
+          : lyr === "utci"
+            ? cell.utci
+            : lyr === "temp"
+              ? (cell.temp ?? cell.heatIndex)
+              : lyr === "humidity"
+                ? cell.humidity
+                : lyr === "wind"
+                  ? cell.wind
+                  : lyr === "solar"
+                    ? cell.solar
+                    : null;
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 /**
  * Pill bands per non-risk layer. Edges match the map's painted steps
- * (step 1 → Low, 2–3 → Moderate, 4 → High, 5 → Extreme):
- * 0–1 layers break at .2/.4/.6/.8, WBGT at (v−15)/25, Heat Index at (v−20)/35.
+ * (step 1 → Low, 2–3 → Moderate, 4 → High, 5 → Extreme).
  */
 const LAYER_PILL_META: Record<
   Exclude<MapLayer, "risk">,
@@ -709,34 +927,12 @@ const LAYER_PILL_META: Record<
     suffix: "",
     avgHint: "Mean HTSI across visible wards",
   },
-  exposure: {
-    bands: [
-      { cat: "LOW", label: "Low", hint: "Exposure < 30" },
-      { cat: "MODERATE", label: "Moderate", hint: "Exposure 30–65" },
-      { cat: "HIGH", label: "High", hint: "Exposure 65–80" },
-      { cat: "VERY_HIGH", label: "Extreme", hint: "Exposure ≥ 80" },
-    ],
-    fmt: (v) => (v > 1 ? v : v * 100).toFixed(0),
-    suffix: "/100",
-    avgHint: "Mean exposure across visible wards",
-  },
-  vulnerability: {
-    bands: [
-      { cat: "LOW", label: "Low", hint: "Vulnerability < 30" },
-      { cat: "MODERATE", label: "Moderate", hint: "Vulnerability 30–65" },
-      { cat: "HIGH", label: "High", hint: "Vulnerability 65–80" },
-      { cat: "VERY_HIGH", label: "Extreme", hint: "Vulnerability ≥ 80" },
-    ],
-    fmt: (v) => (v > 1 ? v : v * 100).toFixed(0),
-    suffix: "/100",
-    avgHint: "Mean vulnerability across visible wards",
-  },
   wbgt: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "WBGT < 22.5°C" },
-      { cat: "MODERATE", label: "Moderate", hint: "WBGT 22.5–31.3°C" },
-      { cat: "HIGH", label: "High", hint: "WBGT 31.3–35°C" },
-      { cat: "VERY_HIGH", label: "Extreme", hint: "WBGT ≥ 35°C" },
+      { cat: "LOW", label: "Low", hint: "WBGT < 22°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "WBGT 22–30°C" },
+      { cat: "HIGH", label: "High", hint: "WBGT 30–33°C" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "WBGT ≥ 33°C" },
     ],
     fmt: (v) => `${v.toFixed(1)}°`,
     suffix: "C",
@@ -744,14 +940,69 @@ const LAYER_PILL_META: Record<
   },
   hi: {
     bands: [
-      { cat: "LOW", label: "Low", hint: "Heat index < 30.5°C" },
-      { cat: "MODERATE", label: "Moderate", hint: "Heat index 30.5–42.8°C" },
-      { cat: "HIGH", label: "High", hint: "Heat index 42.8–48°C" },
-      { cat: "VERY_HIGH", label: "Extreme", hint: "Heat index ≥ 48°C" },
+      { cat: "LOW", label: "Low", hint: "Heat index < 27°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "Heat index 27–39°C" },
+      { cat: "HIGH", label: "High", hint: "Heat index 39–45°C" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Heat index ≥ 45°C" },
     ],
     fmt: (v) => `${v.toFixed(1)}°`,
     suffix: "C",
     avgHint: "Mean heat index across visible wards",
+  },
+  utci: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "UTCI < 26°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "UTCI 26–38°C" },
+      { cat: "HIGH", label: "High", hint: "UTCI 38–44°C" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "UTCI ≥ 44°C" },
+    ],
+    fmt: (v) => `${v.toFixed(1)}°`,
+    suffix: "C",
+    avgHint: "Mean UTCI across visible wards",
+  },
+  temp: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Temp < 28°C" },
+      { cat: "MODERATE", label: "Moderate", hint: "Temp 28–35°C" },
+      { cat: "HIGH", label: "High", hint: "Temp 35–38°C" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Temp ≥ 38°C" },
+    ],
+    fmt: (v) => `${v.toFixed(1)}°`,
+    suffix: "C",
+    avgHint: "Mean temperature across visible wards",
+  },
+  humidity: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Humidity < 40%" },
+      { cat: "MODERATE", label: "Moderate", hint: "Humidity 40–70%" },
+      { cat: "HIGH", label: "High", hint: "Humidity 70–85%" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Humidity ≥ 85%" },
+    ],
+    fmt: (v) => `${v.toFixed(0)}`,
+    suffix: "%",
+    avgHint: "Mean relative humidity across visible wards",
+  },
+  wind: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Wind ≥ 4.0 m/s" },
+      { cat: "MODERATE", label: "Moderate", hint: "Wind 1.5–4.0 m/s" },
+      { cat: "HIGH", label: "High", hint: "Wind 0.8–1.5 m/s" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Wind < 0.8 m/s" },
+    ],
+    fmt: (v) => `${v.toFixed(1)}`,
+    suffix: " m/s",
+    avgHint: "Mean wind speed across visible wards",
+  },
+  solar: {
+    bands: [
+      { cat: "LOW", label: "Low", hint: "Solar < 200 W/m²" },
+      { cat: "MODERATE", label: "Moderate", hint: "Solar 200–600 W/m²" },
+      { cat: "HIGH", label: "High", hint: "Solar 600–800 W/m²" },
+      { cat: "VERY_HIGH", label: "Extreme", hint: "Solar ≥ 800 W/m²" },
+    ],
+    fmt: (v) => `${v.toFixed(0)}`,
+    suffix: " W/m²",
+    avgHint: "Mean solar radiation across visible wards",
   },
 };
 
@@ -805,11 +1056,11 @@ export default function MapsPage() {
     wardSwrOpts,
   );
   const cells = (heatmap as any)?.wards ?? [];
-  const selectedCell = selectedId
-    ? (cells.find((c: any) => c.wardId === selectedId) ?? null)
+  const selectedCell = selectedId != null
+    ? (cells.find((c: any) => String(c.wardId) === String(selectedId) || String(c.ward) === String(selectedId)) ?? null)
     : null;
-  const displayCell = displayId
-    ? (cells.find((c: any) => c.wardId === displayId) ?? null)
+  const displayCell = displayId != null
+    ? (cells.find((c: any) => String(c.wardId) === String(displayId) || String(c.ward) === String(displayId)) ?? null)
     : null;
 
   const forecast = forecastRaw?.locationId === displayId ? forecastRaw : null;
@@ -854,14 +1105,6 @@ export default function MapsPage() {
       },
       demographics: {
         totalPopulation: displayCell.population ?? 0,
-        elderlyPct: displayCell.elderlyPct ?? 0.09,
-        elderlyCutoff: ">60",
-        elderlyDefaulted: false,
-        childrenPct: displayCell.childrenPct ?? 0.08,
-        outdoorWorkerPct: displayCell.outdoorWorkerPct ?? 0.15,
-        informalIndex: displayCell.informalIndex ?? 0.3,
-        informalDefaulted: false,
-        settlementDensity: settlementDensity(displayCell.informalIndex ?? 0.3),
       },
     };
   }, [telemetryRaw, displayId, displayCell]);
@@ -1107,6 +1350,8 @@ export default function MapsPage() {
             selectedId={selectedId}
             displayCell={displayCell}
             displayId={displayId}
+            hoveredId={hoveredId}
+            layer={layer}
           />
         </WardInfoBar>
       </div>

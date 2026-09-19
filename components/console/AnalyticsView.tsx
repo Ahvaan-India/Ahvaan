@@ -31,7 +31,6 @@ import {
   dataBins,
 } from "@/lib/chartAxis";
 import { ChartTooltip } from "@/components/console/ChartTooltip";
-import { AccuracyComparison } from "@/components/console/AccuracyComparison";
 import useSWR from "swr";
 
 const BAR_CURSOR = { fill: "hsl(var(--muted))", fillOpacity: 0.35 };
@@ -719,8 +718,6 @@ function CityTrend() {
         </CardContent>
       </Card>
 
-      {/* Index Accuracy & Reference Validation */}
-      <AccuracyComparison />
     </div>
   );
 }

@@ -16,6 +16,7 @@ export function SubCard({
   qualifierTone,
   tooltip,
   footer,
+  accuracyBadge,
 }: {
   icon: LucideIcon;
   label: string;
@@ -25,22 +26,38 @@ export function SubCard({
   qualifierTone?: "low" | "moderate" | "high" | "extreme" | null;
   tooltip?: string;
   footer?: React.ReactNode;
+  accuracyBadge?: {
+    value: string;
+    tooltip: string;
+  };
 }) {
   return (
     <div className="relative rounded-xl border border-border bg-card p-3 transition-shadow hover:shadow-sm">
-      <div className="flex items-center justify-between gap-1.5 text-xs font-semibold text-muted-foreground">
+      <div className="flex items-center justify-between gap-1 text-xs font-semibold text-muted-foreground">
         <div className="flex items-center gap-1.5 min-w-0">
           <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="truncate">{label}</span>
         </div>
-        {tooltip && (
-          <div className="group/tooltip relative shrink-0">
-            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60 transition-colors hover:text-primary cursor-help" />
-            <div className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-48 rounded-lg border bg-popover p-2 text-[11px] font-normal leading-tight text-popover-foreground shadow-lg group-hover/tooltip:block sm:w-56">
-              {tooltip}
+        <div className="flex items-center gap-1 shrink-0">
+          {accuracyBadge && (
+            <div className="group/acc relative">
+              <span className="inline-flex items-center rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 cursor-help transition-colors hover:bg-emerald-500/25">
+                {accuracyBadge.value}
+              </span>
+              <div className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-52 rounded-lg border border-border bg-popover p-2 text-[11px] font-normal leading-tight text-popover-foreground shadow-lg group-hover/acc:block sm:w-60">
+                {accuracyBadge.tooltip}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+          {tooltip && (
+            <div className="group/tooltip relative">
+              <HelpCircle className="h-3.5 w-3.5 text-muted-foreground/60 transition-colors hover:text-primary cursor-help" />
+              <div className="pointer-events-none absolute right-0 top-full z-50 mt-1 hidden w-48 rounded-lg border bg-popover p-2 text-[11px] font-normal leading-tight text-popover-foreground shadow-lg group-hover/tooltip:block sm:w-56">
+                {tooltip}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
       <div className="mt-1.5 flex flex-wrap items-baseline gap-x-1">
         <span className="text-2xl font-bold tabular-nums tracking-tight">{value}</span>

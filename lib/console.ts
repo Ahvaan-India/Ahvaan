@@ -65,13 +65,6 @@ export function qualifyTemp(c: number): string {
   return WeatherQualifier.MODERATE;
 }
 
-/** Categorical settlement density from the informal-housing index (0–1). */
-export function settlementDensity(idx: number): "Low" | "Medium" | "High" {
-  if (idx >= 0.5) return "High";
-  if (idx >= 0.25) return "Medium";
-  return "Low";
-}
-
 export type DeltaDir = "up" | "down" | "flat";
 
 /** Directional delta vs a prior reading (for driver arrows). */

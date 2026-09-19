@@ -17,12 +17,10 @@ import {
   qualifySolar,
   qualifyTemp,
   qualifyWind,
-  settlementDensity,
 } from "@/lib/console";
 import { timezoneForLocation } from "@/lib/geo/timezone";
 import { parseISTWall, toISTWall } from "@/lib/analysis";
 import { REDIS_TTL, withRedisCache } from "@/lib/redis";
-import { VULNERABILITY_DEFAULTS } from "@/lib/heatshield/config";
 import { getDb } from "@/lib/db";
 import { weatherTable } from "@/lib/db/schema";
 import { and, eq, gte, lte, sql } from "drizzle-orm";
@@ -143,12 +141,6 @@ export async function GET(_req: Request, { params }: { params: any }) {
       elderlyDefaulted: vuln.flags.includes("elderly_pct_default"),
       childrenPct: total > 0 ? (population.children0To6 ?? 0) / total : 0,
       outdoorWorkerPct: outdoorWorkerFraction(population),
-      informalIndex: VULNERABILITY_DEFAULTS.informalHousingIndex,
-      informalDefaulted: vuln.flags.includes("informal_housing_default"),
-      settlementDensity: settlementDensity(
-        VULNERABILITY_DEFAULTS.informalHousingIndex,
-      ),
-      flags: vuln.flags,
     };
 
     // Current risk: shared city board (from precomputed analysis table)

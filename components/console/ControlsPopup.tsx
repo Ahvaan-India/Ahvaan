@@ -1,27 +1,38 @@
 "use client";
 
-import { Layers, Filter, X, Check, Flame, Thermometer, Sun, Users, Shield, RotateCcw } from "lucide-react";
+import { Layers, Filter, X, Check, Flame, Thermometer, Sun, Wind, Droplet, RotateCcw } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { motion, AnimatePresence } from "framer-motion";
 
-export type MapLayer = "thermal" | "wbgt" | "hi" | "exposure" | "vulnerability";
+export type MapLayer =
+  | "thermal"
+  | "wbgt"
+  | "hi"
+  | "utci"
+  | "temp"
+  | "humidity"
+  | "wind"
+  | "solar";
 
 const LAYERS: Array<{ id: MapLayer; label: string; icon: LucideIcon; desc: string }> = [
   { id: "thermal", label: "HTSI / Thermal", icon: Thermometer, desc: "Heat stress index (0–100)" },
-  { id: "wbgt", label: "WBGT Index", icon: Sun, desc: "Wet bulb globe temp" },
-  { id: "hi", label: "Heat Index", icon: Thermometer, desc: "Apparent temperature" },
-  { id: "exposure", label: "Exposure Index", icon: Users, desc: "Density distribution" },
-  { id: "vulnerability", label: "Vulnerability", icon: Shield, desc: "Social & structural" },
+  { id: "wbgt", label: "WBGT Index", icon: Sun, desc: "Wet-bulb globe temp (°C)" },
+  { id: "hi", label: "Heat Index", icon: Flame, desc: "Apparent temperature (°C)" },
+  { id: "utci", label: "UTCI Index", icon: Sun, desc: "Universal climate index (°C)" },
+  { id: "temp", label: "Temperature", icon: Thermometer, desc: "Ambient temp (°C)" },
+  { id: "humidity", label: "Humidity", icon: Droplet, desc: "Relative humidity (%)" },
+  { id: "wind", label: "Wind Speed", icon: Wind, desc: "Velocity (m/s)" },
+  { id: "solar", label: "Solar Radiation", icon: Sun, desc: "Irradiance (W/m²)" },
 ];
 
 const CATEGORY_FILTERS = [
   { id: "LOW", label: "Low", color: "#14b8a6", bg: "bg-teal-500/15 border-teal-500/30 text-teal-700 dark:text-teal-300" },
   { id: "MODERATE", label: "Moderate", color: "#eab308", bg: "bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300" },
-  { id: "HIGH", label: "High", color: "#f97316", bg: "bg-orange-500/15 border-orange-500/30 text-orange-700 dark:text-orange-300" },
-  { id: "VERY_HIGH", label: "Extreme", color: "#ef4444", bg: "bg-red-500/15 border-red-500/30 text-red-700 dark:text-red-300" },
+  { id: "HIGH", label: "High", color: "#ef4444", bg: "bg-red-500/15 border-red-500/30 text-red-700 dark:text-red-300" },
+  { id: "VERY_HIGH", label: "Extreme", color: "#991b1b", bg: "bg-red-900/15 border-red-900/30 text-red-800 dark:text-red-300" },
 ];
 
 export function ControlsPopup({

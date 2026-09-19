@@ -1,14 +1,11 @@
 "use client";
 
 import {
-  Baby,
   Droplet,
-  Home,
+  Sun,
   Thermometer,
   Users,
   Wind,
-  Sun,
-  Briefcase,
   Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -61,14 +58,6 @@ export interface Telemetry {
   };
   demographics: {
     totalPopulation: number;
-    elderlyPct: number;
-    elderlyCutoff: string;
-    elderlyDefaulted: boolean;
-    childrenPct: number;
-    outdoorWorkerPct: number;
-    informalIndex: number;
-    informalDefaulted: boolean;
-    settlementDensity: string;
   };
 }
 
@@ -139,9 +128,6 @@ function toCSV(data: Telemetry): string {
     ["risk", data.risk ? String(data.risk.value) : ""],
     ["riskCategory", data.risk?.category ?? ""],
     ["totalPopulation", String(data.demographics.totalPopulation)],
-    ["elderlyPct", String(data.demographics.elderlyPct)],
-    ["childrenPct", String(data.demographics.childrenPct)],
-    ["outdoorWorkerPct", String(data.demographics.outdoorWorkerPct)],
   ];
   const esc = (v: string) =>
     /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
@@ -310,41 +296,16 @@ export function TelemetryPanel({
 
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Demographic Exposure Snapshot
+            Demographics
           </h3>
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2">
             <SubCard
               icon={Users}
               label="Total Population"
               value={d.totalPopulation.toLocaleString("en-IN")}
               tooltip={METRIC_EXPLANATIONS.exposure}
             />
-            <SubCard
-              icon={Baby}
-              label={`Elderly (${d.elderlyCutoff})`}
-              value={`${(d.elderlyPct * 100).toFixed(1)}%`}
-              qualifier={d.elderlyDefaulted ? "Default" : "Census"}
-              tooltip={METRIC_EXPLANATIONS.vulnerability}
-            />
-            <SubCard
-              icon={Home}
-              label="Informal Settlement"
-              value={d.settlementDensity}
-              qualifier={d.informalDefaulted ? "Default" : "Survey"}
-              tooltip="Informal housing density index: reflects structural insulation deficiency and heat retention."
-            />
-            <SubCard
-              icon={Briefcase}
-              label="Outdoor Workers"
-              value={`${(d.outdoorWorkerPct * 100).toFixed(1)}%`}
-              tooltip="Outdoor Workforce (%): Proportion of workers with high direct solar exposure during peak daylight hours."
-            />
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Children 0–6: {(d.childrenPct * 100).toFixed(1)}% (census).
-            “Default” badges mark schema-missing inputs using documented
-            constants.
-          </p>
         </div>
       </CardContent>
     </Card>

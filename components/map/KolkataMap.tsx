@@ -108,10 +108,8 @@ function pxToLat(px: number, t: number): number {
  * Keyless Esri endpoints (no signup/token). NOTE the z/y/x order — Esri's
  * cached /tile path takes {z}/{y}/{x}, unlike OSM-style {z}/{x}/{y}.
  */
-function tileUrl(t: number, x: number, y: number, dark: boolean): string {
-  return dark
-    ? `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${t}/${y}/${x}`
-    : `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${t}/${y}/${x}`;
+function tileUrl(t: number, x: number, y: number): string {
+  return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${t}/${y}/${x}`;
 }
 
 function boundsOf(cells: MapWard[]): MapBounds {
@@ -152,17 +150,23 @@ function centroid(cell: MapWard): [number, number] | null {
 function layerValue(c: MapWard, layer: string): number | null {
   switch (layer) {
     case "thermal":
-      return c.thermal;
+      return c.thermal ?? null;
     case "wbgt":
-      return c.wbgt;
+      return c.wbgt ?? null;
     case "hi":
-      return c.heatIndex;
-    case "exposure":
-      return c.exposure;
-    case "vulnerability":
-      return c.vulnerability;
+      return c.heatIndex ?? null;
+    case "utci":
+      return c.utci ?? null;
+    case "temp":
+      return c.temp ?? c.heatIndex ?? null;
+    case "humidity":
+      return c.humidity ?? null;
+    case "wind":
+      return c.wind ?? null;
+    case "solar":
+      return c.solar ?? null;
     default:
-      return c.thermal;
+      return c.thermal ?? null;
   }
 }
 
@@ -170,15 +174,63 @@ function layerValue(c: MapWard, layer: string): number | null {
 export function layerStepFor(c: MapWard, layer: string): number | null {
   const v = layerValue(c, layer);
   if (v === null || !Number.isFinite(v)) return c.step ?? 1;
-  let n: number;
-  if (layer === "wbgt") n = (v - 15) / 25;
-  else if (layer === "hi") n = (v - 20) / 35;
-  else n = v > 1 ? v / 100 : v; // thermal/exposure/vuln (0–1 or 0–100)
-  const clamped = Math.max(0, Math.min(1, n));
-  if (clamped >= 0.8) return 5;
-  if (clamped >= 0.65) return 4;
-  if (clamped >= 0.5) return 3;
-  if (clamped >= 0.3) return 2;
+
+  if (layer === "wbgt") {
+    if (v >= 33) return 5;
+    if (v >= 30) return 4;
+    if (v >= 27) return 3;
+    if (v >= 22) return 2;
+    return 1;
+  }
+  if (layer === "hi") {
+    if (v >= 45) return 5;
+    if (v >= 39) return 4;
+    if (v >= 33) return 3;
+    if (v >= 27) return 2;
+    return 1;
+  }
+  if (layer === "utci") {
+    if (v >= 44) return 5;
+    if (v >= 38) return 4;
+    if (v >= 32) return 3;
+    if (v >= 26) return 2;
+    return 1;
+  }
+  if (layer === "temp") {
+    if (v >= 38) return 5;
+    if (v >= 35) return 4;
+    if (v >= 32) return 3;
+    if (v >= 28) return 2;
+    return 1;
+  }
+  if (layer === "humidity") {
+    if (v >= 85) return 5;
+    if (v >= 70) return 4;
+    if (v >= 55) return 3;
+    if (v >= 40) return 2;
+    return 1;
+  }
+  if (layer === "wind") {
+    if (v < 0.8) return 5;
+    if (v < 1.5) return 4;
+    if (v < 2.5) return 3;
+    if (v < 4.0) return 2;
+    return 1;
+  }
+  if (layer === "solar") {
+    if (v >= 800) return 5;
+    if (v >= 600) return 4;
+    if (v >= 400) return 3;
+    if (v >= 200) return 2;
+    return 1;
+  }
+
+  // HTSI / thermal (0–100)
+  const norm = v > 1 ? v : v * 100;
+  if (norm >= 80) return 5;
+  if (norm >= 65) return 4;
+  if (norm >= 50) return 3;
+  if (norm >= 30) return 2;
   return 1;
 }
 
@@ -413,7 +465,7 @@ export function KolkataMap({
         );
         out.push({
           key: `${t}/${xx}/${y}`,
-          url: tileUrl(t, xx, y, darkTiles),
+          url: tileUrl(t, xx, y),
           // ay = north edge (smaller screen-y), by = south edge: origin at
           // the top with positive height (was flipped before).
           x: ax,
@@ -424,7 +476,7 @@ export function KolkataMap({
       }
     }
     return out;
-  }, [tileZoom, bounds, vbX, vbY, vbW, vbH, darkTiles]);
+  }, [tileZoom, bounds, vbX, vbY, vbW, vbH]);
 
   // Belt-and-braces: whenever the parent clears the hover (page-level
   // mouse-leave, overlay enter), drop the tooltip too — never show a popup
@@ -654,7 +706,7 @@ export function KolkataMap({
   return (
     <div
       ref={wrapRef}
-      className="relative h-full w-full overflow-hidden bg-gradient-to-br from-[#e6edf5] via-[#eef2f7] to-[#dbe4ee] touch-none select-none dark:from-[#0a1120] dark:via-[#0f172a] dark:to-[#131e32]"
+      className="relative h-full w-full overflow-hidden bg-gradient-to-br from-[#e6edf5] via-[#eef2f7] to-[#dbe4ee] touch-none select-none"
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={endPointer}
@@ -716,7 +768,7 @@ export function KolkataMap({
             y={tl.y}
             width={tl.w}
             height={tl.h}
-            opacity={darkTiles ? 0.8 : 0.9}
+            opacity={0.9}
             preserveAspectRatio="none"
           />
         ))}
@@ -824,7 +876,7 @@ export function KolkataMap({
 
       {/* Soft vignette for depth (non-interactive) */}
       <div
-        className="pointer-events-none absolute inset-0 shadow-[inset_0_0_110px_rgba(15,23,42,0.14)] dark:shadow-[inset_0_0_130px_rgba(0,0,0,0.5)]"
+        className="pointer-events-none absolute inset-0 shadow-[inset_0_0_110px_rgba(15,23,42,0.14)]"
         aria-hidden
       />
 
@@ -934,9 +986,15 @@ export function KolkataMap({
               ? "WBGT"
               : layer === "hi"
                 ? "H-Index"
-                : layer === "exposure"
-                  ? "Exposure"
-                  : "Vuln"}
+                : layer === "utci"
+                  ? "UTCI"
+                  : layer === "temp"
+                    ? "Temp"
+                    : layer === "humidity"
+                      ? "Humidity"
+                      : layer === "wind"
+                        ? "Wind"
+                        : "Solar"}
         </span>
         {RISK_COLORS.map((c) => (
           <span
@@ -947,10 +1005,20 @@ export function KolkataMap({
         ))}
         <span className="ml-1 hidden text-[10px] tabular-nums text-muted-foreground sm:inline">
           {layer === "wbgt"
-            ? "15°→40°"
+            ? "22°→33°C"
             : layer === "hi"
-              ? "20°→55°"
-              : "Low → Extreme"}
+              ? "27°→45°C"
+              : layer === "utci"
+                ? "26°→44°C"
+                : layer === "temp"
+                  ? "28°→38°C"
+                  : layer === "humidity"
+                    ? "40%→85%"
+                    : layer === "wind"
+                      ? "4.0→0.8 m/s"
+                      : layer === "solar"
+                        ? "200→800 W/m²"
+                        : "Low → Extreme"}
         </span>
       </div>
 
@@ -986,47 +1054,38 @@ export function KolkataMap({
               let labelStr = "HTSI Index";
               if (layer === "wbgt") {
                 labelStr = "WBGT Index";
-                valStr =
-                  tip.cell.wbgt !== null && Number.isFinite(tip.cell.wbgt)
-                    ? `${tip.cell.wbgt.toFixed(1)}°C`
-                    : "-";
+                const v = tip.cell.wbgt;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
               } else if (layer === "hi") {
                 labelStr = "Heat Index";
-                valStr =
-                  tip.cell.heatIndex !== null && Number.isFinite(tip.cell.heatIndex)
-                    ? `${tip.cell.heatIndex.toFixed(1)}°C`
-                    : "-";
-              } else if (layer === "exposure") {
-                labelStr = "Exposure Index";
-                const v = tip.cell.exposure;
-                valStr =
-                  v !== null && Number.isFinite(v)
-                    ? (v > 1 ? v.toFixed(0) : (v * 100).toFixed(0))
-                    : "-";
-              } else if (layer === "vulnerability") {
-                labelStr = "Vulnerability Index";
-                const v = tip.cell.vulnerability;
-                valStr =
-                  v !== null && Number.isFinite(v)
-                    ? (v > 1 ? v.toFixed(0) : (v * 100).toFixed(0))
-                    : "-";
+                const v = tip.cell.heatIndex;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
+              } else if (layer === "utci") {
+                labelStr = "UTCI Index";
+                const v = tip.cell.utci;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
+              } else if (layer === "temp") {
+                labelStr = "Temperature";
+                const v = tip.cell.temp ?? tip.cell.heatIndex;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
+              } else if (layer === "humidity") {
+                labelStr = "Relative Humidity";
+                const v = tip.cell.humidity;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(0)}%` : "-";
+              } else if (layer === "wind") {
+                labelStr = "Wind Speed";
+                const v = tip.cell.wind;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)} m/s` : "-";
+              } else if (layer === "solar") {
+                labelStr = "Solar Irradiance";
+                const v = tip.cell.solar;
+                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(0)} W/m²` : "-";
               } else {
                 labelStr = "HTSI Index";
                 const v = tip.cell.thermal;
-                valStr =
-                  v !== null && Number.isFinite(v)
-                    ? (v > 1 ? v.toFixed(2) : (v * 100).toFixed(2))
-                    : "-";
+                valStr = typeof v === "number" && Number.isFinite(v) ? (v > 1 ? v.toFixed(2) : (v * 100).toFixed(2)) : "-";
               }
               const step = layerStepFor(tip.cell, layer) ?? 1;
-              const layerCategory =
-                step <= 1
-                  ? "LOW"
-                  : step <= 3
-                    ? "MODERATE"
-                    : step === 4
-                      ? "HIGH"
-                      : "VERY_HIGH";
 
               return (
                 <>
@@ -1034,7 +1093,7 @@ export function KolkataMap({
                     <span className="text-xl font-black tabular-nums leading-none">
                       {valStr}
                     </span>
-                    <RiskBadge category={layerCategory} />
+                    <RiskBadge step={step} />
                   </div>
                   <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
                     {labelStr}
