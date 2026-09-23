@@ -7,6 +7,7 @@
 import { getBoard } from "../board";
 import { getAnalysisRange } from "../db/queries";
 import { addDays, istDateString, summarizeDayAnalysis } from "../analysis";
+import { withRedisCache } from "../redis";
 import { evaluateWardAlert } from "../alerts";
 import { getWardLocality } from "../geo/wardNames";
 import type { AnalysisHourEntry } from "../db/schema";
@@ -79,11 +80,15 @@ export interface FullSiteContext {
 
 /**
  * Build complete site-wide context with all 144 wards data and hourly profiles.
+ * Cached 120s via Redis (was uncached → every chat message = 15-30MB board scan).
+ * UTCI/wbgt/hi/htsi all sourced from analysis table (getAnalysisRange / board), no live calc.
  */
 export async function buildSiteContext(
   selectedLocationId?: number | null,
 ): Promise<FullSiteContext> {
-  const { data: board } = await getBoard(2);
+  const cacheKey = `ahvaan:chat:ctx:v2:${selectedLocationId ?? "none"}`;
+  const { data } = await withRedisCache(cacheKey, 120, async () => {
+    const { data: board } = await getBoard(2);
   const wards = board.wards ?? [];
 
   // 1. All Wards Catalog Summary
@@ -230,18 +235,20 @@ export async function buildSiteContext(
     }
   }
 
-  return {
-    metroSummary: {
-      totalWards: wards.length,
-      activeWards: allWardsCatalog.filter((w) => w.riskScore !== null).length,
-      meanMetroRiskScore: Math.round(meanRisk * 1000) / 1000,
-      watchLevelName: wl.name,
-      categoryCounts,
-      topPeakRiskWards,
-    },
-    selectedWard,
-    allWardsCatalog,
-  };
+    return {
+      metroSummary: {
+        totalWards: wards.length,
+        activeWards: allWardsCatalog.filter((w) => w.riskScore !== null).length,
+        meanMetroRiskScore: Math.round(meanRisk * 1000) / 1000,
+        watchLevelName: wl.name,
+        categoryCounts,
+        topPeakRiskWards,
+      },
+      selectedWard,
+      allWardsCatalog,
+    };
+  });
+  return data;
 }
 
 /** Legacy alias helper for backward compatibility */

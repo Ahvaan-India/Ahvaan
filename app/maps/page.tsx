@@ -147,8 +147,9 @@ function WardDetailBody({
     activeId ? `/api/showcase/${activeId}` : null,
     jsonFetch,
     {
-      dedupingInterval: 1000,
+      dedupingInterval: 30000,
       revalidateOnFocus: false,
+      revalidateOnReconnect: false,
     },
   );
 
@@ -161,8 +162,9 @@ function WardDetailBody({
     activeId ? `/api/accuracy?lat=${lat}&lon=${lon}&wbgt=${currWbgt}&hi=${currHi}` : null,
     jsonFetch,
     {
-      dedupingInterval: 15000,
+      dedupingInterval: 60000,
       revalidateOnFocus: false,
+      revalidateOnReconnect: false,
     },
   );
 
@@ -670,7 +672,17 @@ const LAYER_PILL_META: Record<
 
 export default function MapsPage() {
   const { selectedId, setSelectedId } = useWard();
+  const [hoveredIdRaw, setHoveredIdRaw] = useState<number | null>(null);
   const [hoveredId, setHoveredId] = useState<number | null>(null);
+  // Debounce hover → telemetry/forecast/showcase: prevents N+1 query storm on mouse sweep
+  useEffect(() => {
+    if (hoveredIdRaw === null) {
+      setHoveredId(null);
+      return;
+    }
+    const t = setTimeout(() => setHoveredId(hoveredIdRaw), 220);
+    return () => clearTimeout(t);
+  }, [hoveredIdRaw]);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounced(search, 180);
   const deferredSearch = useDeferredValue(debouncedSearch);
@@ -690,16 +702,20 @@ export default function MapsPage() {
   const swrOpts = useMemo(
     () => ({
       keepPreviousData: true,
-      dedupingInterval: 10000,
+      dedupingInterval: 60000,
       revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshInterval: 0,
     }),
     [],
   );
 
   const wardSwrOpts = useMemo(
     () => ({
-      dedupingInterval: 10000,
+      dedupingInterval: 30000,
       revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      keepPreviousData: true,
     }),
     [],
   );
@@ -730,6 +746,14 @@ export default function MapsPage() {
   const telemetry = useMemo(() => {
     if (telemetryRaw?.wardId === displayId) return telemetryRaw;
     if (!displayCell) return null;
+    // Use board's precomputed mortality (from analysis table peak HI) if available, else fallback
+    const fallbackMort = (() => {
+      try {
+        const { computeMortalityBreakdown } = require("@/lib/heatshield/mortality");
+        const hi = displayCell.heatIndex ?? 35;
+        return computeMortalityBreakdown({ heatIndex: hi, nighttimeRecovery: 0.6, persistence: 0.5, vulnerability: (displayCell.vulnerability ?? 40) > 1 ? (displayCell.vulnerability ?? 40)/100 : (displayCell.vulnerability ?? 0.4) });
+      } catch { return null; }
+    })();
     return {
       wardId: displayCell.wardId,
       ward: displayCell.ward,
@@ -749,6 +773,7 @@ export default function MapsPage() {
         utci: displayCell.utci ?? null,
         confidence: displayCell.confidence ?? 1.0,
         computedAt: new Date().toISOString(),
+        mortality: (displayCell as any).mortality ?? fallbackMort ?? null,
       },
       macro: {
         temp: displayCell.temp ?? displayCell.heatIndex ?? null,
@@ -940,7 +965,7 @@ export default function MapsPage() {
         <LeftNav />
         <div
           className="relative flex min-h-0 flex-1 flex-col bg-muted/20"
-          onMouseLeave={() => setHoveredId(null)}
+          onMouseLeave={() => setHoveredIdRaw(null)}
         >
           <div className="relative flex-1">
             {cells.length === 0 ? (
@@ -953,7 +978,7 @@ export default function MapsPage() {
                 selectedId={selectedId}
                 hoveredId={hoveredId}
                 onSelect={(id) => setSelectedId(id)}
-                onHover={setHoveredId}
+                onHover={setHoveredIdRaw}
                 searchQuery={deferredSearch}
                 layer={layer}
                 onOpenControls={() => setControlsOpen(true)}

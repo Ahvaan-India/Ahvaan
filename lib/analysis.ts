@@ -88,6 +88,31 @@ export function currentIstHourLabel(at: Date = new Date()): string {
 
 export { IST_OFFSET_MS };
 
+/** Sanitize implausible thermal values that blow up due to unit bugs (e.g. UTCI 2411). */
+function sanitizeThermal(v: number | null, kind: "utci" | "wbgt" | "hi" | "htsi" | "wbt"): number | null {
+  if (v === null || !Number.isFinite(v)) return null;
+  // Analysis table stores Celsius for wbgt/hi/utci, 0-100 for htsi. 2411.4 is a leaked pa-unit bug
+  // (pa passed as hPa→kPa 10×, polynomial explodes). Also handle ×100 scaled storage.
+  if (kind === "utci") {
+    if (v > 500) return sanitizeThermal(v / 100, kind); // 2411.4 → 24.11
+    if (v > 60 || v < -50) return null;
+  }
+  if (kind === "wbgt") {
+    if (v > 500) return sanitizeThermal(v / 100, kind);
+    if (v > 60 || v < -30) return null;
+  }
+  if (kind === "hi") {
+    if (v > 500) return sanitizeThermal(v / 100, kind);
+    if (v > 70 || v < -30) return null;
+  }
+  if (kind === "htsi" && (v > 150 || v < 0)) {
+    if (v > 500) return sanitizeThermal(v / 10, kind);
+    return null;
+  }
+  if (kind === "wbt" && (v > 60 || v < -30)) return null;
+  return v;
+}
+
 /** Extract all metrics from an hourly analysis entry regardless of key casing */
 export function getAnalysisMetrics(e: any) {
   const a = (e?.analysis ?? {}) as Record<string, unknown>;
@@ -96,11 +121,11 @@ export function getAnalysisMetrics(e: any) {
   const num = (v: unknown): number | null =>
     typeof v === "number" && Number.isFinite(v) ? v : null;
 
-  const htsi = num(a.HTSI ?? a.htsi);
-  const wbgt = num(a.WBGT ?? a.wbgt);
-  const hi = num(a.HI ?? a.hi);
-  const utci = num(a.UTCI ?? a.utci);
-  const wbt = num(a.WBT ?? a.wbt);
+  const htsi = sanitizeThermal(num(a.HTSI ?? a.htsi), "htsi");
+  const wbgt = sanitizeThermal(num(a.WBGT ?? a.wbgt), "wbgt");
+  const hi = sanitizeThermal(num(a.HI ?? a.hi), "hi");
+  const utci = sanitizeThermal(num(a.UTCI ?? a.utci), "utci");
+  const wbt = sanitizeThermal(num(a.WBT ?? a.wbt), "wbt");
 
   const temp = num(inp.temperature2m ?? inp.temp ?? inp.temperature);
   const humidity = num(inp.relativeHumidity2m ?? inp.humidity ?? inp.rh);

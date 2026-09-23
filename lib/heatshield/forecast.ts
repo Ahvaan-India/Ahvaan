@@ -4,7 +4,8 @@ import { computeVulnerabilityScore } from "./vulnerability";
 import { computePersistence } from "./temporal";
 import { computeCompositeRisk } from "./composite";
 import { computeMortalityIndex } from "./mortality";
-import { computeUTCI, estimateTmrt } from "./utci";
+// UTCI sourced from analysis table — no runtime estimate here.
+// Previously: estimateTmrt + computeUTCI per hour; removed per request.
 import { NIGHTTIME_RECOVERY } from "./config";
 import { localDayKey } from "../geo/timezone";
 import { parseISTWall } from "../analysis";
@@ -63,20 +64,8 @@ export function computeForecastDays({
     if (!r.timestamp) continue;
     const wbgt = wbgtApprox(r.temperature2m, r.relativeHumidity2m);
     const hi = heatIndexRothfusz(r.temperature2m, r.relativeHumidity2m);
-    let utci: number | null = null;
-    let utciAvailable = false;
-    try {
-      const { tmrt } = estimateTmrt(r.temperature2m, r.shortwaveRadiation as number | null, r.windSpeed10m as number | null);
-      const wind = typeof r.windSpeed10m === "number" && Number.isFinite(r.windSpeed10m) ? r.windSpeed10m : 1;
-      const res = computeUTCI(r.temperature2m, tmrt, wind, r.relativeHumidity2m);
-      if (Number.isFinite(res.utci)) {
-        utci = res.utci;
-        utciAvailable = true;
-      }
-    } catch {
-      // keep unavailable
-    }
-    const { score } = computeThermalStress({ wbgt, heatIndex: hi, utci, utciAvailable });
+    // UTCI not estimated here — use analysis table's stored UTCI if you need it.
+    const { score } = computeThermalStress({ wbgt, heatIndex: hi, utci: null, utciAvailable: false });
     hours.push({ t: parseISTWall(r.timestamp), ta: r.temperature2m, score, wbgt, hi });
   }
 

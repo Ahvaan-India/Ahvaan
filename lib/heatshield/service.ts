@@ -18,7 +18,8 @@ import {
 import { computeCompositeRisk } from "./composite";
 import { computeConfidenceScore } from "./confidence";
 import { computeMortalityIndex } from "./mortality";
-import { computeUTCI, estimateTmrt } from "./utci";
+// UTCI now sourced from `analysis` table (precomputed engine) — no runtime Bröde calc here.
+// `computeUTCI`/`estimateTmrt` kept in ./utci.ts for reference but not invoked in this live-weather path.
 import {
   buildSummary,
   computeTopDrivers,
@@ -59,23 +60,9 @@ function finiteOrNull(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-function utciForRow(row: WeatherRow): { utci: number | null; available: boolean; estimated: boolean } {
-  const Ta = finiteOrNull(row.temperature2m);
-  const RH = finiteOrNull(row.relativeHumidity2m);
-  const v10 = finiteOrNull(row.windSpeed10m);
-  const sr = finiteOrNull(row.shortwaveRadiation);
-  if (Ta === null || RH === null) return { utci: null, available: false, estimated: false };
-  // Need wind for offset; if missing, use 1 m/s fallback but mark unavailable? Use 1 and keep available false.
-  const wind = v10 ?? 1;
-  const { tmrt, estimated } = estimateTmrt(Ta, sr ?? 0, wind);
-  try {
-    const { utci } = computeUTCI(Ta, tmrt, wind, RH);
-    if (!Number.isFinite(utci)) return { utci: null, available: false, estimated: false };
-    return { utci, available: true, estimated };
-  } catch {
-    return { utci: null, available: false, estimated: false };
-  }
-}
+// UTCI removed from live-weather path — analysis table is authoritative.
+// Keeping thermal from WBGT+HI only (UTCI unavailable → weights renormalize per thermal.ts:145).
+// If you need UTCI for a ward, read `analysis.analysis[*].utci` via lib/analysis.ts getAnalysisMetrics.
 
 export function buildRiskResponse(input: PipelineInput): RiskResponse {
   const { location, weatherRows, population } = input;
@@ -88,11 +75,12 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   }
 
   // Per-hour thermal scores over the window; skip rows missing Ta/RH.
+  // UTCI not computed here — sourced from `analysis` table only.
   const hourlyScores: number[] = [];
   const hourlyTemps: number[] = [];
   const hourlyTimes: Date[] = [];
-  let anyUtciAvailable = false;
-  let anyUtciEstimated = false;
+  const anyUtciAvailable = false;
+  const anyUtciEstimated = false;
 
   for (const row of weatherRows) {
     const ta = finiteOrNull(row.temperature2m);
@@ -100,20 +88,14 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
     if (ta === null || rh === null) continue;
     const wbgt = wbgtApprox(ta, rh);
     const hi = heatIndexRothfusz(ta, rh);
-    const { utci, available, estimated } = utciForRow(row);
-    if (available) anyUtciAvailable = true;
-    if (estimated) anyUtciEstimated = true;
     const { score } = computeThermalStress({
       wbgt,
       heatIndex: hi,
-      utci: utci ?? null,
-      utciAvailable: available,
+      utci: null,
+      utciAvailable: false,
     });
     hourlyScores.push(score);
     hourlyTemps.push(ta);
-    // weather.timestamp is IST wall clock (mode:"string") — parseISTWall
-    // gives the true instant on any host (plain `new Date(str)` is
-    // host-TZ-dependent for naive strings).
     if (row.timestamp) hourlyTimes.push(parseISTWall(row.timestamp));
   }
 
@@ -125,23 +107,18 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   }
 
   // Current indicators from the latest USABLE hour (walk back from the end).
+  // UTCI not computed live — will be null (see analysis table for stored UTCI).
   let latestWbgt = 0;
   let latestHi = 0;
-  let latestUtci: number | null = null;
-  let latestUtciAvailable = false;
-  let latestUtciEstimated = false;
+  const latestUtci: number | null = null;
+  const latestUtciAvailable = false;
+  const latestUtciEstimated = false;
   for (let i = weatherRows.length - 1; i >= 0; i--) {
     const ta = finiteOrNull(weatherRows[i].temperature2m);
     const rh = finiteOrNull(weatherRows[i].relativeHumidity2m);
     if (ta !== null && rh !== null) {
       latestWbgt = wbgtApprox(ta, rh);
       latestHi = heatIndexRothfusz(ta, rh);
-      const u = utciForRow(weatherRows[i]);
-      latestUtci = u.utci;
-      latestUtciAvailable = u.available;
-      latestUtciEstimated = u.estimated;
-      if (u.available) anyUtciAvailable = true;
-      if (u.estimated) anyUtciEstimated = true;
       break;
     }
   }
@@ -149,8 +126,8 @@ export function buildRiskResponse(input: PipelineInput): RiskResponse {
   const thermal = computeThermalStress({
     wbgt: latestWbgt,
     heatIndex: latestHi,
-    utci: latestUtci,
-    utciAvailable: latestUtciAvailable,
+    utci: null,
+    utciAvailable: false,
   });
 
   const exposure = computeExposureScore(population, location.geometry);

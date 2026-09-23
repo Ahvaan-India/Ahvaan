@@ -20,12 +20,19 @@ import {
   qualifyWind,
   qualifySolar,
 } from "@/lib/console";
+import {
+  computeMortalityBreakdown,
+  mortalityBand,
+} from "@/lib/heatshield/mortality";
 
 function fmtVal(v: any, decimals = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
   return Number(v).toFixed(decimals);
 }
 
+// Back-compat re-export: now delegates to the canonical weighted model
+// (35% HI + 25% night + 20% persistence + 20% vulnerability) instead of the
+// old buggy 45/25/15/15 that scaled vulnerability 0-100 → always 100.
 export function computeMortalityIndex({
   heatIndex,
   nighttimeRecovery,
@@ -37,30 +44,37 @@ export function computeMortalityIndex({
   persistence?: number | null;
   vulnerability?: number | null;
 }): { index: number; label: string; band: string } {
-  const hi = heatIndex ?? 35;
-  const nr = nighttimeRecovery ?? 0.5;
-  const p = persistence ?? 0.5;
-  const v = vulnerability ?? 0.5;
-
-  const baseRisk = Math.max(0, (hi - 27) / 25);
-  const rawIndex =
-    (baseRisk * 0.45 + (1 - nr) * 0.25 + p * 0.15 + v * 0.15) * 100;
-  const index = Math.min(100, Math.max(0, Math.round(rawIndex)));
-
+  const breakdown = computeMortalityBreakdown({
+    heatIndex: heatIndex ?? 35,
+    nighttimeRecovery: nighttimeRecovery ?? 0.5,
+    persistence: persistence ?? 0.5,
+    vulnerability: vulnerability ?? 0.5,
+  });
+  const band = breakdown.band;
   let label = "Low Excess Risk";
-  let band = "Baseline mortality rate expected";
-  if (index >= 75) {
-    label = "Severe Mortality Surge";
-    band = "Estimated +35-50% excess heat mortality";
-  } else if (index >= 50) {
+  let desc = "Baseline mortality rate expected";
+  if (breakdown.index >= 80) {
+    label = "Extreme";
+    desc = "Extreme burden";
+  } else if (breakdown.index >= 60) {
+    label = "Very high";
+    desc = "Very high burden";
+  } else if (breakdown.index >= 40) {
     label = "High Excess Risk";
-    band = "Estimated +15-34% excess heat mortality";
-  } else if (index >= 25) {
-    label = "Moderate Risk";
-    band = "Estimated +5-14% excess heat mortality";
+    desc = "High burden";
+  } else if (breakdown.index >= 20) {
+    label = "Elevated Risk";
+    desc = "Elevated burden";
   }
+  return { index: breakdown.index, label, band: desc };
+}
 
-  return { index, label, band };
+function mortalityLabel(index: number): string {
+  if (index >= 80) return "Extreme";
+  if (index >= 60) return "Very high";
+  if (index >= 40) return "High";
+  if (index >= 20) return "Elevated";
+  return "Low";
 }
 
 interface WardMetricsGridProps {
@@ -117,44 +131,29 @@ export function WardMetricsGrid({
               <p className="text-3xl font-black tabular-nums">
                 {htsiVal !== null ? htsiVal.toFixed(2) : "-"}
               </p>
-              <p className="text-xs font-medium text-muted-foreground">
-                {htsiVal !== null
-                  ? htsiVal >= 80
-                    ? "Extreme Thermal Stress"
-                    : htsiVal >= 60
-                      ? "High Thermal Stress"
-                      : htsiVal >= 30
-                        ? "Moderate Thermal Stress"
-                        : "Low Thermal Stress"
-                  : (telemetryRisk?.displayCategory ?? "")}
-              </p>
             </CardContent>
           </Card>
           {(() => {
             const r = telemetryRisk;
             if (!r) return null;
-            const mort = computeMortalityIndex({
-              heatIndex: r.heatIndex,
-              nighttimeRecovery: r.recovery,
-              persistence: r.persistence,
-              vulnerability: r.vulnerability,
-            });
+            // Prefer board's precomputed mortality (from analysis peak HI, varies per ward) — fixes “fixed at 30” (morning low HI).
+            const boardMort = r.mortality && typeof r.mortality.index === "number" ? r.mortality.index : null;
+            const idx = boardMort !== null ? boardMort : computeMortalityBreakdown({
+              heatIndex: r.heatIndex ?? 35,
+              nighttimeRecovery: r.recovery ?? 0.6,
+              persistence: r.persistence ?? 0.5,
+              vulnerability: r.vulnerability ?? 0.4,
+            }).index;
             return (
               <Card>
                 <CardContent className="p-3">
                   <p className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    <HeartPulse className="h-3 w-3 text-green-500" /> Mortality
+                    <HeartPulse className="h-3 w-3 text-red-500" /> Mortality
                   </p>
                   <p className="text-3xl font-black tabular-nums">
-                    {mort.index}
-                    <span className="text-sm font-semibold text-muted-foreground">
-                      /100
-                    </span>
+                    {idx}
+                    <span className="text-sm font-semibold text-muted-foreground">/100</span>
                   </p>
-                  <p className="text-xs font-semibold text-foreground">
-                    {mort.label}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{mort.band}</p>
                 </CardContent>
               </Card>
             );

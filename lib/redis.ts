@@ -174,7 +174,11 @@ export async function redisDel(keyOrPrefix: string): Promise<void> {
 /**
  * Read-through cache: Redis (or memory fallback) first, `fn` (Postgres)
  * on miss, then populate with `ttlSeconds`. Always fail-open to Postgres.
+ * Includes in-flight single-flight dedup so 10 parallel misses for the same
+ * key coalesce to 1 Postgres query (prevents thundering-herd on 60s TTL expiry).
  */
+const inflight = new Map<string, Promise<unknown>>();
+
 export async function withRedisCache<T>(
   key: string,
   ttlSeconds: number,
@@ -186,15 +190,29 @@ export async function withRedisCache<T>(
   } catch (err) {
     warnOnce(err);
   }
-  const data = await fn();
-  if (data !== null && data !== undefined) {
-    try {
-      await redisSet(key, data, ttlSeconds);
-    } catch (err) {
-      warnOnce(err);
-    }
+  const existing = inflight.get(key) as Promise<T> | undefined;
+  if (existing) {
+    const data = await existing;
+    return { data, cached: true };
   }
-  return { data, cached: false };
+  const p = (async () => {
+    const data = await fn();
+    if (data !== null && data !== undefined) {
+      try {
+        await redisSet(key, data, ttlSeconds);
+      } catch (err) {
+        warnOnce(err);
+      }
+    }
+    return data;
+  })();
+  inflight.set(key, p);
+  try {
+    const data = await p;
+    return { data, cached: false };
+  } finally {
+    inflight.delete(key);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,12 +225,12 @@ export const REDIS_TTL = {
   population: 3_600,
   weatherWindow: 300, // model data refreshes ~hourly
   wards: 3_600,
-  board: 120, // city board: per-ward ranges + in-memory math, rebuilt at most every 2 min
-  heatmap: 60,
-  summary: 60,
-  forecast: 120, // per-ward outlook (slowest single-ward read)
-  telemetry: 60, // per-ward detail panel (re-requested on every hover)
-  trend: 300, // history series move slowly
+  board: 300, // city board: per-ward ranges + in-memory math, rebuilt at most every 5 min (was 120 → DB storm)
+  heatmap: 120, // was 60 → halves board rebuilds on dashboard load
+  summary: 120, // was 60
+  forecast: 300, // per-ward outlook (slowest single-ward read) was 120
+  telemetry: 120, // per-ward detail panel (re-requested on every hover) was 60
+  trend: 600, // history series move slowly was 300
 } as const;
 
 export const redisKeys = {
@@ -225,8 +243,9 @@ export const redisKeys = {
   population: (id: number) => `ahvaan:pop:${id}`,
   weatherWindow: (id: number, hours: number) => `ahvaan:wx:${id}:${hours}`,
   wards: "ahvaan:wards",
-  heatmap: "ahvaan:heatmap",
-  summary: "ahvaan:summary",
+  // v2 bump: previous payloads cached polluted UTCI 2411.4 (analysis pa-unit bug) — force miss.
+  heatmap: "ahvaan:heatmap:v2",
+  summary: "ahvaan:summary:v2",
 };
 
 export async function invalidateAnalysis(

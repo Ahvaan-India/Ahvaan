@@ -143,9 +143,9 @@ export async function GET(_req: Request, { params }: { params: any }) {
       outdoorWorkerPct: outdoorWorkerFraction(population),
     };
 
-    // Current risk: shared city board (from precomputed analysis table)
-    const { getBoard, htsiCategory } = await import("@/lib/board");
-    const { data: board } = await getBoard(7);
+    // Current risk: lightweight per-ward board (was getBoard(7) = 141 wards × 7d ≈15MB)
+    const { getBoardForWard, htsiCategory } = await import("@/lib/board");
+    const { data: board } = await getBoardForWard(wardId, 7);
     const boardWard = board.wards.find((w) => w.locationId === wardId);
     let risk: {
       value: number;
@@ -161,6 +161,7 @@ export async function GET(_req: Request, { params }: { params: any }) {
       utci: number | null;
       confidence: number;
       computedAt: string;
+      mortality: { index: number; band: string } | null;
     } | null = null;
     if (boardWard?.latest) {
       const r = boardWard.latest;
@@ -178,6 +179,7 @@ export async function GET(_req: Request, { params }: { params: any }) {
         utci: r.indicators.utci,
         confidence: r.confidence.score,
         computedAt: r.computedAt,
+        mortality: r.mortality ?? null,
       };
     }
 
@@ -201,10 +203,10 @@ export async function GET(_req: Request, { params }: { params: any }) {
       trajectory = [];
     }
 
-    // Whole-response cache (60s): the panel re-requests this on every map
-    // hover/selection. Only successful payloads store.
+    // Whole-response cache (120s + edge 120s): hover debounced 220ms + SWR 30s dedup prevents storm
+    // v2: previous cache held polluted UTCI 2411.4 — bumped to force miss, data now sanitized from analysis table (26.19)
     const { data: payload, cached } = await withRedisCache(
-      `ahvaan:telemetry:${wardId}`,
+      `ahvaan:telemetry:v2:${wardId}`,
       REDIS_TTL.telemetry,
       async () => ({
         wardId,
@@ -217,15 +219,13 @@ export async function GET(_req: Request, { params }: { params: any }) {
         macro,
         demographics,
         trajectory,
-        // No alert/event history: alerts are evaluated client-side
-        // (lib/alerts.ts) and nothing is saved to the DB.
         history: [],
       }),
     );
 
     return NextResponse.json(payload, {
       status: 200,
-      headers: { "Cache-Control": "no-store", "X-Cache": cached ? "HIT" : "MISS" },
+      headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=60", "X-Cache": cached ? "HIT" : "MISS" },
     });
   } catch (err) {
     if (err instanceof LocationNotFoundError) {

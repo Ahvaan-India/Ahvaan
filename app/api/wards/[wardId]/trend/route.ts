@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getBoard } from "@/lib/board";
+import { getBoardForWard } from "@/lib/board";
 import { REDIS_TTL, withRedisCache } from "@/lib/redis";
 
 export const runtime = "nodejs";
@@ -27,7 +27,7 @@ export async function GET(req: Request, { params }: { params: any }) {
       `ahvaan:ward-trend:${wardId}:${days}`,
       REDIS_TTL.trend,
       async () => {
-        const { data: board } = await getBoard(days);
+        const { data: board } = await getBoardForWard(wardId, days);
         const ward = board.wards.find((w) => w.locationId === wardId);
         if (!ward) return null;
         return ward.days.slice(-days).map((d) => ({
