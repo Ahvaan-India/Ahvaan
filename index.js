@@ -1,10 +1,17 @@
 require('dotenv').config();
-
 const API_KEY = process.env.API_KEY;
 const DEVICE_ID = process.env.DEVICE_ID;
-
-async function sendTestAlert() {
+const {getSMSEnabledUsers} = require ('./smsStore');
+async function sendAlertSMS(message, recipients) {
     try {
+        if(!recipients.length) {
+            console.log("No sms-enabled users");
+            return;
+        }
+        if (process.env.DRY_RUN === 'true') {
+            console.log("DRY RUN, would send to:", recipients, "| message:", message);
+            return;
+        }
         const response = await fetch(
             `https://api.textbee.dev/api/v1/gateway/devices/${DEVICE_ID}/send-sms`,
             {
@@ -14,12 +21,11 @@ async function sendTestAlert() {
                     "x-api-key": API_KEY,
                 },
                 body: JSON.stringify({
-                    recipients: ["+91XXXXXXXXX"], // replace with real recipient number
-                    message: "AHVAAN TEST ALERT: High heat detected!"
+                    recipients: recipients,
+                    message: message
                 })
             }
         );
-
         const data = await response.json();
 
         if (!response.ok) {
@@ -34,5 +40,10 @@ async function sendTestAlert() {
         console.error("❌ Error while sending SMS:", err);
     }
 }
+async function triggerHeatwaveAlert(message) {
+    const users = await getSMSEnabledUsers();
+    const recipients = users.map(u => "+91" + u.phoneNumber);
+    await sendAlertSMS(message, recipients);
+}
 
-sendTestAlert();
+module.exports = { sendAlertSMS, triggerHeatwaveAlert };
