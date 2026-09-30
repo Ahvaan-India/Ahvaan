@@ -33,8 +33,7 @@ export interface KolkataMapProps {
   /** Info bar open — right-side chrome fades so nothing half-hides behind it. */
   panelOpen?: boolean;
 }
-import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
-import { RiskBadge } from "@/components/console/RiskBadge";
+import { useReducedMotion } from "framer-motion";
 import { useIsMobile } from "@/lib/hooks/useMobile";
 import { RISK_SCALE_FILLS } from "@/lib/enums/risk.enum";
 import { getWardLocality } from "@/lib/geo/wardLocalities";
@@ -318,6 +317,13 @@ export function matchesZoneQuery(c: MapZone, query: string): boolean {
   return false;
 }
 
+// Static style objects — prevents re-allocations on every render.
+const POLY_STYLE_IDLE: React.CSSProperties = { cursor: "pointer" };
+const POLY_STYLE_ANIMATED: React.CSSProperties = {
+  cursor: "pointer",
+  transition: "fill 0.2s ease, fill-opacity 0.2s ease",
+};
+
 const WardPolygon = memo(function WardPolygon({
   cell,
   bounds,
@@ -329,6 +335,7 @@ const WardPolygon = memo(function WardPolygon({
   dimmed,
   softened,
   fill,
+  isDragging,
   onHover,
   onSelect,
   onMove,
@@ -343,6 +350,7 @@ const WardPolygon = memo(function WardPolygon({
   dimmed: boolean;
   fill: string;
   softened: boolean;
+  isDragging: boolean;
   onHover: (id: string | null) => void;
   onSelect: (id: string) => void;
   onMove: (e: React.MouseEvent, c: MapZone) => void;
@@ -388,6 +396,11 @@ const WardPolygon = memo(function WardPolygon({
       ? 0.95
       : Math.min(0.92, 0.45 + Math.min(1.0, zoom / 3) * 0.40);
 
+  // Memoize event handlers per cell to avoid allocations every render.
+  const handleEnter = useCallback(() => onHover(cell.zoneId), [onHover, cell.zoneId]);
+  const handleMove = useCallback((e: React.MouseEvent) => onMove(e, cell), [onMove, cell]);
+  const handleClick = useCallback(() => onSelect(cell.zoneId), [onSelect, cell.zoneId]);
+
   return (
     <polygon
       points={pts}
@@ -406,13 +419,10 @@ const WardPolygon = memo(function WardPolygon({
       strokeOpacity={strokeOp}
       vectorEffect="non-scaling-stroke"
       strokeLinejoin="round"
-      style={{
-        cursor: "pointer",
-        transition: "fill 0.2s ease, fill-opacity 0.2s ease, stroke-width 0.15s ease",
-      }}
-      onMouseEnter={() => onHover(cell.zoneId)}
-      onMouseMove={(e) => onMove(e, cell)}
-      onClick={() => onSelect(cell.zoneId)}
+      style={isDragging ? POLY_STYLE_IDLE : POLY_STYLE_ANIMATED}
+      onMouseEnter={handleEnter}
+      onMouseMove={handleMove}
+      onClick={handleClick}
     />
   );
 });
@@ -693,7 +703,11 @@ export function KolkataMap({
     return () => el.removeEventListener("wheel", onWheelNative);
   }, [zoomAtPoint]);
 
-  const handlePointerDown = (e: React.PointerEvent) => {
+  // Use refs for drag state to avoid re-creating handlers on every drag change.
+  const dragRef = useRef(drag);
+  dragRef.current = drag;
+
+  const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (isControlTarget(e)) return;
     if (e.pointerType !== "mouse") setTip(null);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -711,10 +725,11 @@ export function KolkataMap({
       setDrag(null);
       return;
     }
-    setDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
-  };
+    const { pan: currentPan } = viewRef.current;
+    setDrag({ sx: e.clientX, sy: e.clientY, ox: currentPan.x, oy: currentPan.y });
+  }, []);
 
-  const handlePointerMove = (e: React.PointerEvent) => {
+  const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -737,19 +752,26 @@ export function KolkataMap({
       }
       return;
     }
-    if (!drag || !wrapRef.current) return;
-    const dx = e.clientX - drag.sx;
-    const dy = e.clientY - drag.sy;
+    const d = dragRef.current;
+    if (!d || !wrapRef.current) return;
+    const dx = e.clientX - d.sx;
+    const dy = e.clientY - d.sy;
     if (Math.hypot(dx, dy) < 6) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    const scaleX = vbW / rect.width, scaleY = vbH / rect.height;
+    // Read vb dimensions from viewRef to avoid closure stale capture.
+    const curZ = Math.min(MAX_Z, Math.max(MIN_Z, viewRef.current.zoom));
+    let curVbW = W / curZ, curVbH = H / curZ;
+    const curAspect = rect.width > 0 && rect.height > 0 ? rect.width / rect.height : W / H;
+    if (curAspect > curVbW / curVbH) curVbW = curVbH * curAspect;
+    else curVbH = curVbW / curAspect;
+    const scaleX = curVbW / rect.width, scaleY = curVbH / rect.height;
     queuePan({
-      x: drag.ox + dx * scaleX,
-      y: drag.oy + dy * scaleY,
+      x: d.ox + dx * scaleX,
+      y: d.oy + dy * scaleY,
     });
-  };
+  }, [queuePan]);
 
-  const endPointer = (e: React.PointerEvent) => {
+  const endPointer = useCallback((e: React.PointerEvent) => {
     if (pointersRef.current.size === 2) {
       try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
     }
@@ -763,7 +785,7 @@ export function KolkataMap({
         const last = lastTapRef.current;
         if (last && Date.now() - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 40) {
           lastTapRef.current = null;
-          zoomAtPoint(e.clientX, e.clientY, zoom + 1);
+          zoomAtPoint(e.clientX, e.clientY, viewRef.current.zoom + 1);
         } else {
           lastTapRef.current = { t: Date.now(), x: e.clientX, y: e.clientY };
         }
@@ -773,8 +795,20 @@ export function KolkataMap({
     }
     downRef.current = null;
     setDrag(null);
-  };
-  const handlePointerUp = (e: React.PointerEvent) => { endPointer(e); };
+  }, [zoomAtPoint]);
+
+  const handlePointerUp = useCallback((e: React.PointerEvent) => { endPointer(e); }, [endPointer]);
+
+  // Stable leave handlers — avoid new arrow functions on every render.
+  const handlePointerLeave = useCallback(() => {
+    onHover(null);
+    setTip(null);
+  }, [onHover]);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    if (isControlTarget(e)) return;
+    zoomAtPoint(e.clientX, e.clientY, viewRef.current.zoom + 1);
+  }, [zoomAtPoint]);
 
   const normalizedSearch = (searchQuery ?? "").trim().toLowerCase();
   const isMatch = useCallback(
@@ -833,6 +867,36 @@ export function KolkataMap({
     [layer, valueOf],
   );
 
+  // Pre-compute per-zone fill, dimmed & isSearchMatch as Maps.
+  // This avoids calling callbacks per-zone during render.
+  const zoneFills = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of visibleCells) {
+      m.set(c.zoneId, showGradient ? paintFillOf(c) : normalFillOf(c));
+    }
+    return m;
+  }, [visibleCells, showGradient, paintFillOf, normalFillOf]);
+
+  const zoneDimmed = useMemo(() => {
+    const m = new Map<string, boolean>();
+    for (const c of visibleCells) {
+      let dim = false;
+      if (hasSearch && !matchesZoneQuery(c, normalizedSearch) && c.zoneId !== selectedId) dim = true;
+      else if (focusDistrict !== null && c.districtCode !== focusDistrict) dim = true;
+      m.set(c.zoneId, dim);
+    }
+    return m;
+  }, [visibleCells, hasSearch, normalizedSearch, selectedId, focusDistrict]);
+
+  const zoneSearchMatch = useMemo(() => {
+    if (!hasSearch) return null; // null = no search active, skip lookups
+    const m = new Map<string, boolean>();
+    for (const c of visibleCells) {
+      m.set(c.zoneId, matchesZoneQuery(c, normalizedSearch));
+    }
+    return m;
+  }, [visibleCells, hasSearch, normalizedSearch]);
+
   /** Culling heatpoints to eliminate lag when zoomed in */
   const locationGlows = useMemo(() => {
     if (!showGradient) return [];
@@ -841,19 +905,25 @@ export function KolkataMap({
       const s = paintStepOf(c);
       if (s !== null) stepOfZone.set(c.zoneId, s);
     }
+
+    // Pre-build a Map for O(1) zone lookup instead of O(n) find() per tile.
+    const zoneByCellId = new Map<string, MapZone>();
+    for (const c of visibleCells) {
+      zoneByCellId.set(c.zoneId, c);
+    }
+
     const tileStep = (id: number, zoneId: string): 1 | 2 | 3 | 4 | 5 | undefined => {
       let raw: number | null | undefined;
       if (tileValues instanceof Map) raw = tileValues.get(id);
       else if (tileValues) raw = (tileValues as Record<number, number | null>)[id];
       if (typeof raw === "number" && Number.isFinite(raw)) {
         if (layer === "risk") {
-          const zoneCell = visibleCells.find((c) => c.zoneId === zoneId);
+          const zoneCell = zoneByCellId.get(zoneId);
           const vulnVal = zoneCell?.vulnerability ?? null;
           if (vulnVal !== null) {
             const htsiDec = raw > 1 ? raw / 100 : raw;
             const vulnDec = vulnVal > 1 ? vulnVal / 100 : vulnVal;
-            const pop = 4 * 3500;
-            const tileRisk = ((htsiDec * pop + vulnDec * pop) / 2) * pop;
+            const tileRisk = (htsiDec + vulnDec) / 2;
             const s = stepForValue(tileRisk, "risk");
             if (s !== null) return s;
           }
@@ -1000,6 +1070,9 @@ export function KolkataMap({
     };
   }, [onHover]);
 
+  // Track whether a drag is active — used to disable polygon CSS transitions.
+  const isDragging = !!drag;
+
   return (
     <div
       ref={wrapRef}
@@ -1007,19 +1080,10 @@ export function KolkataMap({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={endPointer}
-      onPointerLeave={() => {
-        onHover(null);
-        setTip(null);
-      }}
-      onMouseLeave={() => {
-        onHover(null);
-        setTip(null);
-      }}
+      onPointerLeave={handlePointerLeave}
+      onMouseLeave={handlePointerLeave}
       onPointerDown={handlePointerDown}
-      onDoubleClick={(e) => {
-        if (isControlTarget(e)) return;
-        zoomAtPoint(e.clientX, e.clientY, zoom + 1);
-      }}
+      onDoubleClick={handleDoubleClick}
       style={{
         cursor: drag ? "grabbing" : "grab",
         willChange: drag ? "transform" : undefined,
@@ -1048,10 +1112,7 @@ export function KolkataMap({
           width={vbW}
           height={vbH}
           fill="transparent"
-          onMouseEnter={() => {
-            onHover(null);
-            setTip(null);
-          }}
+          onMouseEnter={handlePointerLeave}
         />
         {tiles.map((tl) => (
           <image
@@ -1073,11 +1134,12 @@ export function KolkataMap({
             zoom={z}
             isSel={c.zoneId === selectedId}
             isHov={c.zoneId === hoveredId}
-            isSearchMatch={isMatch(c)}
+            isSearchMatch={zoneSearchMatch?.get(c.zoneId) ?? false}
             isFocusedDistrict={focusDistrict !== null && c.districtCode === focusDistrict}
-            dimmed={isDimmed(c)}
+            dimmed={zoneDimmed.get(c.zoneId) ?? false}
             softened={showGradient}
-            fill={showGradient ? paintFillOf(c) : normalFillOf(c)}
+            fill={zoneFills.get(c.zoneId) ?? NO_DATA}
+            isDragging={isDragging}
             onHover={onHover}
             onSelect={onSelect}
             onMove={onMove}
