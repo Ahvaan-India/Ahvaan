@@ -26,10 +26,7 @@ export async function GET(
   }
   try {
     const zonesFile = await loadZonesStatic();
-    const zone = zonesFile?.zones.find((z) => z.ulid === ulid) ?? null;
-    if (!zone) {
-      return NextResponse.json({ error: "Unknown zone" }, { status: 404 });
-    }
+    let zone = zonesFile?.zones.find((z) => z.ulid === ulid) ?? null;
 
     const { data: detail, cached } = await withRedisCache(
       redisKeys.zoneDetail(ulid),
@@ -39,6 +36,27 @@ export async function GET(
         const rows = await getForecastWithAnalysis(
           { ulid, from: "2000-01-01", to: "2100-01-01" },
         );
+
+        if (!zone) {
+          if (!rows.length) return null;
+          const heatpoints = [...new Set(rows.map((r) => r.heatPointId))].sort(
+            (a, b) => a - b,
+          );
+          const dcode = ulid.split("_")[1] ?? "";
+          zone = {
+            ulid,
+            district: "Zone",
+            districtCode: dcode,
+            name: `Zone ${ulid}`,
+            kind: "VILLAGE",
+            ward: null,
+            vulnerability: null,
+            lat: 0,
+            long: 0,
+            ring: [],
+            heatpoints,
+          };
+        }
         // date → per-hour value lists across tiles (averaged below).
         const perDateGrid = new Map<
           string,
@@ -169,6 +187,10 @@ export async function GET(
         };
       },
     );
+
+    if (!detail) {
+      return NextResponse.json({ error: "Unknown zone" }, { status: 404 });
+    }
 
     return NextResponse.json(detail, {
       status: 200,
