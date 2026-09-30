@@ -1,66 +1,67 @@
 "use client";
 
 import { useMemo, useRef, useState, memo, useCallback, useEffect } from "react";
-import { Layers, ZoomIn, ZoomOut, LocateFixed, Maximize2, Navigation } from "lucide-react";
+import { Layers, ZoomIn, ZoomOut, LocateFixed, Maximize2, Navigation, Bot } from "lucide-react";
 import type { MapLayer } from "@/components/console/ControlsPopup";
 
 export interface KolkataMapProps {
-  cells: MapWard[];
-  selectedId: number | null;
-  hoveredId: number | null;
-  onSelect: (id: number) => void;
-  onHover: (id: number | null) => void;
+  cells: MapZone[];
+  selectedId: string | null;
+  hoveredId: string | null;
+  onSelect: (id: string) => void;
+  onHover: (id: string | null) => void;
   searchQuery?: string;
   layer?: MapLayer;
   onOpenControls?: () => void;
+  /** Gradient ON renders the heatpoint glow for the active layer.
+      Display only — never recalculated here. */
+  gradientEnabled?: boolean;
+  /** Active date+hour weather values by zone (unique_location_id). */
+  valuesByZone?: ReadonlyMap<string, number | null> | null;
+  /** Backend heatpoint tiles for the location-glow overlay. Discs render
+      at real tile coordinates, each colored by its OWN tile value
+      (`tileValues`) with the zone painted step as fallback. */
+  heatpoints?: Array<{ id: number; lat: number; lon: number; zoneId: string }> | null;
+  /** Per-heatpoint active-hour values (from /api/tiles), keyed by heat_point_id. */
+  tileValues?: ReadonlyMap<number, number | null> | Record<number, number | null> | null;
+  /** Focused district code (selector). Other districts render dimmed. */
+  focusDistrict?: string | null;
+  /** District boundary segments for outline overlays. */
+  districtBorders?: Array<{ code: string; segments: Array<[number, number, number, number]> }> | null;
+  /** GPS fix to showcase (blue dot). Locate button centers on it when set. */
+  gps?: { lat: number; lon: number } | null;
+  /** Info bar open — right-side chrome fades so nothing half-hides behind it. */
+  panelOpen?: boolean;
 }
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { RiskBadge } from "@/components/console/RiskBadge";
-import {
-  getWardLocality,
-  getWardDisplayName,
-  matchesWardQuery,
-} from "@/lib/geo/wardNames";
 import { useIsMobile } from "@/lib/hooks/useMobile";
-import { RISK_SCALE_FILLS } from "@/lib/risk";
+import { RISK_SCALE_FILLS } from "@/lib/enums/risk.enum";
+import { getWardLocality } from "@/lib/geo/wardLocalities";
 
-export interface MapWard {
-  wardId: number;
+/** One map zone: static identity + polygon + backend vulnerability. */
+export interface MapZone {
+  zoneId: string;
+  name: string;
+  district: string;
+  districtCode: string;
+  kind: string;
   ward: number | null;
-  wardName: string | null;
-  riskScore: number | null;
-  category: string | null;
-  displayCategory: string | null;
-  step: number | null;
-  wbgt: number | null;
-  heatIndex: number | null;
-  utci: number | null;
-  thermal: number | null;
-  exposure: number | null;
+  /** Backend vulnerability 0–100 (static), null when absent. */
   vulnerability: number | null;
-  temp?: number | null;
-  humidity?: number | null;
-  wind?: number | null;
-  solar?: number | null;
-  realFeel?: number | null;
-  elderlyPct?: number | null;
-  childrenPct?: number | null;
-  outdoorWorkerPct?: number | null;
-  informalIndex?: number | null;
-  population: number | null;
   lat: number;
   long: number;
   ring: Array<[number, number]>;
 }
 
-// Alias kept for existing importers (AnalyticsView, LeftSidebar, maps legend).
+// Paint palette for map fills + legend.
 export const RISK_COLORS = RISK_SCALE_FILLS;
 const NO_DATA = "#cbd5e1";
 
 const W = 640;
 const H = 560;
-const MIN_Z = 1;
-const MAX_Z = 6;
+const MIN_Z = 0.5;
+const MAX_Z = 24;
 
 export interface MapBounds {
   minLon: number;
@@ -104,15 +105,11 @@ function pxToLat(px: number, t: number): number {
   const n = Math.PI * (1 - (2 * px) / (TILE * 2 ** t));
   return (Math.atan(Math.sinh(n)) * 180) / Math.PI;
 }
-/**
- * Keyless Esri endpoints (no signup/token). NOTE the z/y/x order — Esri's
- * cached /tile path takes {z}/{y}/{x}, unlike OSM-style {z}/{x}/{y}.
- */
 function tileUrl(t: number, x: number, y: number): string {
   return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/${t}/${y}/${x}`;
 }
 
-function boundsOf(cells: MapWard[]): MapBounds {
+function boundsOf(cells: MapZone[]): MapBounds {
   let minLon = Infinity,
     maxLon = -Infinity,
     minLat = Infinity,
@@ -136,7 +133,7 @@ function boundsOf(cells: MapWard[]): MapBounds {
   };
 }
 
-function centroid(cell: MapWard): [number, number] | null {
+function centroid(cell: MapZone): [number, number] | null {
   if (!cell.ring.length) return null;
   let sx = 0,
     sy = 0;
@@ -147,34 +144,29 @@ function centroid(cell: MapWard): [number, number] | null {
   return [sx / cell.ring.length, sy / cell.ring.length];
 }
 
-function layerValue(c: MapWard, layer: string): number | null {
-  switch (layer) {
-    case "thermal":
-      return c.thermal ?? null;
-    case "wbgt":
-      return c.wbgt ?? null;
-    case "hi":
-      return c.heatIndex ?? null;
-    case "utci":
-      return c.utci ?? null;
-    case "temp":
-      return c.temp ?? c.heatIndex ?? null;
-    case "humidity":
-      return c.humidity ?? null;
-    case "wind":
-      return c.wind ?? null;
-    case "solar":
-      return c.solar ?? null;
-    default:
-      return c.thermal ?? null;
+/** Zone → painted 1–5 color step for a raw layer value. Exported so summary
+    UI (maps pill) buckets zones exactly as painted. */
+export function stepForValue(
+  v: number | null,
+  layer: string,
+): 1 | 2 | 3 | 4 | 5 | null {
+  if (v === null || !Number.isFinite(v)) return null;
+  if (layer === "vulnerability") {
+    const val = v <= 1 ? v * 100 : v;
+    if (val >= 26) return 5;
+    if (val >= 22) return 4;
+    if (val >= 18) return 3;
+    if (val >= 14) return 2;
+    return 1;
   }
-}
-
-/** Ward → painted 1–5 color step for the active layer. Exported so summary UI (maps pill) buckets wards exactly as painted. */
-export function layerStepFor(c: MapWard, layer: string): number | null {
-  const v = layerValue(c, layer);
-  if (v === null || !Number.isFinite(v)) return c.step ?? 1;
-
+  if (layer === "htsi") {
+    const val = v <= 1 ? v * 100 : v;
+    if (val >= 80) return 5;
+    if (val >= 65) return 4;
+    if (val >= 50) return 3;
+    if (val >= 30) return 2;
+    return 1;
+  }
   if (layer === "wbgt") {
     if (v >= 33) return 5;
     if (v >= 30) return 4;
@@ -194,6 +186,13 @@ export function layerStepFor(c: MapWard, layer: string): number | null {
     if (v >= 38) return 4;
     if (v >= 32) return 3;
     if (v >= 26) return 2;
+    return 1;
+  }
+  if (layer === "wbt") {
+    if (v >= 30) return 5;
+    if (v >= 27) return 4;
+    if (v >= 24) return 3;
+    if (v >= 21) return 2;
     return 1;
   }
   if (layer === "temp") {
@@ -224,40 +223,129 @@ export function layerStepFor(c: MapWard, layer: string): number | null {
     if (v >= 200) return 2;
     return 1;
   }
-
-  // HTSI / thermal (0–100)
-  const norm = v > 1 ? v : v * 100;
-  if (norm >= 80) return 5;
-  if (norm >= 65) return 4;
-  if (norm >= 50) return 3;
-  if (norm >= 30) return 2;
+  if (layer === "risk") {
+    const val = v > 1 ? v / 100 : v;
+    if (val >= 0.80) return 5;
+    if (val >= 0.65) return 4;
+    if (val >= 0.50) return 3;
+    if (val >= 0.35) return 2;
+    return 1;
+  }
   return 1;
+}
+
+/** Short legend label for the active layer. */
+export function layerShortName(layer: string): string {
+  switch (layer) {
+    case "risk":
+      return "Risk";
+    case "htsi":
+      return "HTSI";
+    case "wbgt":
+      return "WBGT";
+    case "hi":
+      return "H-Index";
+    case "utci":
+      return "UTCI";
+    case "wbt":
+      return "WBT";
+    case "temp":
+      return "Temp";
+    case "humidity":
+      return "Humidity";
+    case "wind":
+      return "Wind";
+    case "solar":
+      return "Solar";
+    case "vulnerability":
+      return "Vuln";
+    default:
+      return "Risk";
+  }
+}
+
+/** Human-readable layer value for tooltips and legend hints. */
+export function formatLayerValue(v: number | null, layer: string): string {
+  if (v === null || !Number.isFinite(v)) return "-";
+  switch (layer) {
+    case "risk":
+      return `${(v > 1 ? v / 100 : v).toFixed(2)}`;
+    case "temp":
+    case "wbgt":
+    case "hi":
+    case "utci":
+    case "wbt":
+      return `${v.toFixed(1)}°C`;
+    case "htsi":
+      return `${(v > 1 ? v / 100 : v).toFixed(2)}`;
+    case "humidity":
+      return `${v.toFixed(0)}%`;
+    case "wind":
+      return `${v.toFixed(1)} m/s`;
+    case "solar":
+      return `${v.toFixed(0)} W/m²`;
+    case "vulnerability":
+      return `${(v > 1 ? v / 100 : v).toFixed(2)}`;
+    default:
+      return `${v.toFixed(1)}`;
+  }
+}
+
+/** Short display name for a zone: real locality for Kolkata wards. */
+export function zoneLabel(c: {
+  kind: string;
+  ward: number | null;
+  name: string;
+}): string {
+  if (c.kind === "WARD") {
+    return getWardLocality(c.ward) ?? c.name;
+  }
+  return c.name;
+}
+
+/** Zone search matching (locality, name, district, ward number, unique id). */
+export function matchesZoneQuery(c: MapZone, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return false;
+  if (zoneLabel(c).toLowerCase().includes(q)) return true;
+  if (c.name && c.name.toLowerCase().includes(q)) return true;
+  if (c.district && c.district.toLowerCase().includes(q)) return true;
+  if (c.zoneId.toLowerCase().includes(q)) return true;
+  if (c.ward !== null) {
+    if (String(c.ward).includes(q)) return true;
+    if (`ward ${c.ward}`.includes(q)) return true;
+  }
+  return false;
 }
 
 const WardPolygon = memo(function WardPolygon({
   cell,
   bounds,
   zoom,
-  layer,
   isSel,
   isHov,
   isSearchMatch,
+  isFocusedDistrict = false,
   dimmed,
+  softened,
+  fill,
   onHover,
   onSelect,
   onMove,
 }: {
-  cell: MapWard;
+  cell: MapZone;
   bounds: MapBounds;
   zoom: number;
-  layer: string;
   isSel: boolean;
   isHov: boolean;
   isSearchMatch: boolean;
+  isFocusedDistrict?: boolean;
   dimmed: boolean;
-  onHover: (id: number | null) => void;
-  onSelect: (id: number) => void;
-  onMove: (e: React.MouseEvent, c: MapWard) => void;
+  fill: string;
+  softened: boolean;
+  onHover: (id: string | null) => void;
+  onSelect: (id: string) => void;
+  onMove: (e: React.MouseEvent, c: MapZone) => void;
 }) {
   const pts = useMemo(
     () =>
@@ -266,48 +354,69 @@ const WardPolygon = memo(function WardPolygon({
         .join(" "),
     [cell.ring, bounds],
   );
-  const step = layerStepFor(cell, layer);
-  const fill = step ? RISK_COLORS[step - 1] : NO_DATA;
+  const isHighlighted = isSel || isHov || isSearchMatch;
+  const baseOpacity = dimmed
+    ? 0.12
+    : isHighlighted
+      ? 0.92
+      : isFocusedDistrict
+        ? 0.78
+        : 0.50;
+  const fillOp = softened
+    ? isHighlighted
+      ? 0.78
+      : isFocusedDistrict
+        ? 0.58
+        : baseOpacity * 0.42
+    : baseOpacity;
+  const baseStrokeWidth = Math.min(
+    1.8,
+    Math.max(0.45, 0.45 + Math.max(0, Math.log2(Math.max(0.5, zoom))) * 0.35)
+  );
+
+  const strokeW = isSel
+    ? baseStrokeWidth + 1.2
+    : isSearchMatch
+      ? baseStrokeWidth + 0.8
+      : isHov
+        ? baseStrokeWidth + 0.5
+        : baseStrokeWidth;
+
+  const strokeOp = isSel
+    ? 1.0
+    : isHov
+      ? 0.95
+      : Math.min(0.92, 0.45 + Math.min(1.0, zoom / 3) * 0.40);
+
   return (
     <polygon
       points={pts}
       fill={fill}
-      fillOpacity={dimmed ? 0.25 : isSel || isHov || isSearchMatch ? 1 : 0.86}
+      fillOpacity={fillOp}
       stroke={
         isSel
           ? "#0f172a"
           : isSearchMatch
             ? "#2563eb"
             : isHov
-              ? "#334155"
-              : "white"
+              ? "#020617"
+              : "#ffffff"
       }
-      strokeWidth={
-        isSel
-          ? 1.6 / zoom
-          : isSearchMatch
-            ? 1.2 / zoom
-            : isHov
-              ? 1 / zoom
-              : 0.5 / zoom
-      }
+      strokeWidth={strokeW}
+      strokeOpacity={strokeOp}
+      vectorEffect="non-scaling-stroke"
       strokeLinejoin="round"
       style={{
         cursor: "pointer",
-        transition: "fill 0.2s ease, fill-opacity 0.2s ease",
+        transition: "fill 0.2s ease, fill-opacity 0.2s ease, stroke-width 0.15s ease",
       }}
-      onMouseEnter={() => onHover(cell.wardId)}
+      onMouseEnter={() => onHover(cell.zoneId)}
       onMouseMove={(e) => onMove(e, cell)}
-      onClick={() => onSelect(cell.wardId)}
+      onClick={() => onSelect(cell.zoneId)}
     />
   );
 });
 
-/**
- * KolkataMap  Google-Maps-like SVG map.
- * Pan (drag) + zoom (buttons + wheel) + hover tooltip + ward-name labels
- * + search highlight + layer recoloring. Optimized: polygons memoized, bounds memoized.
- */
 export function KolkataMap({
   cells,
   selectedId,
@@ -315,44 +424,90 @@ export function KolkataMap({
   onSelect,
   onHover,
   searchQuery,
-  layer = "thermal",
+  layer = "temp",
   onOpenControls,
+  gradientEnabled = false,
+  valuesByZone = null,
+  heatpoints = null,
+  tileValues = null,
+  focusDistrict = null,
+  districtBorders = null,
+  gps = null,
+  panelOpen = false,
 }: KolkataMapProps) {
   const bounds = useMemo(() => boundsOf(cells), [cells]);
+
+  const zoneBoxes = useMemo(() => {
+    return cells.map((c) => {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let sx = 0, sy = 0, sxLon = 0, syLat = 0;
+      const n = c.ring.length;
+      for (let i = 0; i < n; i++) {
+        const [wx, wy] = project(c.ring[i][0], c.ring[i][1], bounds);
+        if (wx < minX) minX = wx;
+        if (wx > maxX) maxX = wx;
+        if (wy < minY) minY = wy;
+        if (wy > maxY) maxY = wy;
+        sx += wx; sy += wy;
+        sxLon += c.ring[i][0]; syLat += c.ring[i][1];
+      }
+      return {
+        id: c.zoneId,
+        minX, maxX, minY, maxY,
+        pcx: n ? sx / n : 0,
+        pcy: n ? sy / n : 0,
+        ccx: n ? sxLon / n : c.long,
+        ccy: n ? syLat / n : c.lat,
+        empty: n === 0,
+      };
+    });
+  }, [cells, bounds]);
+
+  const boxById = useMemo(
+    () => new Map(zoneBoxes.map((b) => [b.id, b])),
+    [zoneBoxes],
+  );
+
   const wrapRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  // Ref mirror of the view so native listeners (wheel) and gesture
-  // callbacks always read the latest zoom/pan without re-subscribing.
   const viewRef = useRef({ zoom: 1, pan: { x: 0, y: 0 } });
   viewRef.current = { zoom, pan };
-  const [drag, setDrag] = useState<{
-    sx: number;
-    sy: number;
-    ox: number;
-    oy: number;
-  } | null>(null);
-  // Active pointers for pinch gestures + tap tracking for double-tap zoom
+  const [drag, setDrag] = useState<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
-  const pinchRef = useRef<null | {
-    startDist: number;
-    startZoom: number;
-    startPan: { x: number; y: number };
-    startMid: { x: number; y: number };
-  }>(null);
+  const pinchRef = useRef<null | { startDist: number; startZoom: number; startPan: { x: number; y: number }; startMid: { x: number; y: number } }>(null);
   const downRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const lastTapRef = useRef<{ t: number; x: number; y: number } | null>(null);
-  const [tip, setTip] = useState<{
-    x: number;
-    y: number;
-    cell: MapWard;
-  } | null>(null);
+  const [tip, setTip] = useState<{ x: number; y: number; cell: MapZone } | null>(null);
+
+  const panRaf = useRef(0);
+  const panPending = useRef<{ x: number; y: number } | null>(null);
+  const queuePan = useCallback((p: { x: number; y: number }) => {
+    panPending.current = p;
+    if (!panRaf.current) {
+      panRaf.current = requestAnimationFrame(() => {
+        panRaf.current = 0;
+        if (panPending.current) {
+          setPan(panPending.current);
+          panPending.current = null;
+        }
+      });
+    }
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (panRaf.current) cancelAnimationFrame(panRaf.current);
+    },
+    [],
+  );
+
+  const tipRef = useRef<{ x: number; y: number; id: string } | null>(null);
   const isMobile = useIsMobile();
   const prefersReduced = useReducedMotion();
-  const reduceMotion = !!prefersReduced || isMobile;
-  // Measured container size (px) for the scale bar + tile resolution.
   const [boxW, setBoxW] = useState(0);
   const [boxH, setBoxH] = useState(0);
+
   useEffect(() => {
     const el = wrapRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -366,7 +521,7 @@ export function KolkataMap({
     setBoxH(el.clientHeight);
     return () => ro.disconnect();
   }, []);
-  // Base-map tiles follow the app theme (topo / dark-gray).
+
   const [darkTiles, setDarkTiles] = useState(false);
   useEffect(() => {
     const el = document.documentElement;
@@ -377,9 +532,19 @@ export function KolkataMap({
     return () => mo.disconnect();
   }, []);
 
-  // Real-world scale for the current view: full world width (W units) spans
-  // the bounds' longitude range, so meters/unit falls out directly.
-  // (Computed below, after vbW is defined.)
+  const z = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
+
+  let vbW = W / z, vbH = H / z;
+  const aspect = boxW > 0 && boxH > 0 ? boxW / boxH : W / H;
+  if (aspect > vbW / vbH) vbW = vbH * aspect;
+  else vbH = vbW / aspect;
+  const baseX = W / 2 - vbW / 2, baseY = H / 2 - vbH / 2;
+  const vbX = baseX - pan.x, vbY = baseY - pan.y;
+  const vb = `${vbX} ${vbY} ${vbW} ${vbH}`;
+
+  const unitsPerPx = boxW > 0 ? vbW / boxW : 1;
+  const labelUnits = (px: number): number => px * unitsPerPx;
+
   const scaleForWidth = (viewBoxW: number) => {
     if (!boxW) return null;
     const lonSpan = bounds.maxLon - bounds.minLon || 1;
@@ -391,10 +556,7 @@ export function KolkataMap({
     const pow = Math.pow(10, Math.floor(Math.log10(target)));
     const n = target / pow;
     const nice = (n >= 5 ? 5 : n >= 2 ? 2 : 1) * pow;
-    const px = Math.max(
-      36,
-      Math.min(boxW * 0.4, (nice / visibleMeters) * boxW),
-    );
+    const px = Math.max(36, Math.min(boxW * 0.4, (nice / visibleMeters) * boxW));
     const label =
       nice >= 1000
         ? `${+(nice / 1000).toFixed(nice % 1000 === 0 ? 0 : 1)} km`
@@ -402,35 +564,29 @@ export function KolkataMap({
     return { px, label };
   };
 
-  const z = Math.min(MAX_Z, Math.max(MIN_Z, zoom));
+  /** Viewport culling for polygons and labels */
+  const visibleCells = useMemo(() => {
+    const m = 30;
+    const x0 = vbX - m, x1 = vbX + vbW + m;
+    const y0 = vbY - m, y1 = vbY + vbH + m;
+    const out: MapZone[] = [];
+    for (let i = 0; i < cells.length; i++) {
+      const b = zoneBoxes[i];
+      if (!b || b.empty) continue;
+      if (b.maxX < x0 || b.minX > x1 || b.maxY < y0 || b.minY > y1) continue;
+      out.push(cells[i]);
+    }
+    return out;
+  }, [cells, zoneBoxes, vbX, vbY, vbW, vbH]);
 
-  // Derived viewBox with pan (pan is in viewBox units).
-  // Aspect-fitted: the short axis expands to the container aspect, so at
-  // min zoom the whole ward map fits on one screen — never cropped, never
-  // letterboxed — at every zoom level.
-  let vbW = W / z,
-    vbH = H / z;
-  const aspect = boxW > 0 && boxH > 0 ? boxW / boxH : W / H;
-  if (aspect > vbW / vbH) vbW = vbH * aspect;
-  else vbH = vbW / aspect;
-  const baseX = W / 2 - vbW / 2,
-    baseY = H / 2 - vbH / 2;
-  const vbX = baseX - pan.x,
-    vbY = baseY - pan.y;
-  const vb = `${vbX} ${vbY} ${vbW} ${vbH}`;
-
-  // Slippy-map zoom picked so 1 tile px ≈ 1 screen px (crisp, not wasteful).
-  // Uses cover-scale (max of the two axes) to match the slice mapping.
   const tileZoom = useMemo(() => {
     const lonSpan = bounds.maxLon - bounds.minLon || 1;
     const sx = (boxW || 800) / vbW;
     const sy = boxH > 0 ? boxH / vbH : sx;
     const t = Math.log2((Math.max(sx, sy) * W * 360) / (TILE * lonSpan));
-    return Math.max(10, Math.min(17, Math.round(t)));
+    return Math.max(10, Math.min(19, Math.round(t)));
   }, [bounds, boxW, boxH, vbW, vbH]);
 
-  // Tiles covering the current view, positioned in viewBox units so they
-  // sit exactly under the ward polygons (same Mercator projection).
   const tiles = useMemo(() => {
     const t = tileZoom;
     const S = TILE * 2 ** t;
@@ -445,60 +601,47 @@ export function KolkataMap({
     const y0 = Math.floor(u2my(vbY) / TILE);
     const y1 = Math.floor(u2my(vbY + vbH) / TILE);
     const maxTile = 2 ** t - 1;
-    const out: Array<{
-      key: string;
-      url: string;
-      x: number;
-      y: number;
-      w: number;
-      h: number;
-    }> = [];
+    const out: Array<{ key: string; url: string; x: number; y: number; w: number; h: number }> = [];
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         if (y < 0 || y > maxTile) continue;
         const xx = (((x % (maxTile + 1)) + maxTile + 1) % (maxTile + 1)) | 0;
         const [ax, ay] = project(pxToLon(x * TILE, t), pxToLat(y * TILE, t), bounds);
-        const [bx, by] = project(
-          pxToLon((x + 1) * TILE, t),
-          pxToLat((y + 1) * TILE, t),
-          bounds,
-        );
+        const [bx, by] = project(pxToLon((x + 1) * TILE, t), pxToLat((y + 1) * TILE, t), bounds);
         out.push({
           key: `${t}/${xx}/${y}`,
           url: tileUrl(t, xx, y),
-          // ay = north edge (smaller screen-y), by = south edge: origin at
-          // the top with positive height (was flipped before).
-          x: ax,
-          y: ay,
-          w: bx - ax,
-          h: by - ay,
+          x: ax, y: ay, w: bx - ax, h: by - ay,
         });
       }
     }
     return out;
   }, [tileZoom, bounds, vbX, vbY, vbW, vbH]);
 
-  // Belt-and-braces: whenever the parent clears the hover (page-level
-  // mouse-leave, overlay enter), drop the tooltip too — never show a popup
-  // for a ward the pointer is no longer on.
   useEffect(() => {
-    if (hoveredId === null) setTip(null);
+    if (hoveredId === null) {
+      tipRef.current = null;
+      setTip(null);
+    }
   }, [hoveredId]);
 
   const onMove = useCallback(
-    (e: React.MouseEvent, cell: MapWard) => {
-      if (drag) return; // suppress tooltip while dragging
+    (e: React.MouseEvent, cell: MapZone) => {
+      if (drag) return;
       const rect = wrapRef.current?.getBoundingClientRect();
       if (!rect) return;
       const x = Math.min(e.clientX - rect.left + 14, rect.width - 188);
       const y = Math.min(e.clientY - rect.top + 14, rect.height - 120);
-      setTip({ x: Math.max(x, 6), y: Math.max(y, 6), cell });
+      const fx = Math.max(x, 6);
+      const fy = Math.max(y, 6);
+      const prev = tipRef.current;
+      if (prev && prev.id === cell.zoneId && Math.abs(prev.x - fx) < 3 && Math.abs(prev.y - fy) < 3) return;
+      tipRef.current = { x: fx, y: fy, id: cell.zoneId };
+      setTip({ x: fx, y: fy, cell });
     },
     [drag],
   );
 
-  // Zoom keeping the point under (clientX, clientY) fixed — proper map feel.
-  // Stable identity (reads viewRef) so native listeners can use it safely.
   const zoomAtPoint = useCallback(
     (clientX: number, clientY: number, newZoom: number) => {
       const { zoom: z0, pan: p0 } = viewRef.current;
@@ -527,14 +670,8 @@ export function KolkataMap({
     [],
   );
 
-  // Map gestures (drag/pinch/wheel/double-click) must only start on the
-  // map + layout itself — never on overlay controls (zoom stack, legend).
-  // Control containers carry `data-map-control`; anything inside them is
-  // left alone so buttons stay clickable and drags starting there don't pan.
   const isControlTarget = (e: { target: unknown }): boolean => {
-    const t = e.target as unknown as
-      | { closest?: (sel: string) => unknown }
-      | null;
+    const t = e.target as unknown as { closest?: (sel: string) => unknown } | null;
     try {
       return Boolean(t && typeof t.closest === "function" && t.closest("[data-map-control]"));
     } catch {
@@ -542,10 +679,6 @@ export function KolkataMap({
     }
   };
 
-  // Native non-passive wheel listener: React attaches wheel passively at the
-  // root, so e.preventDefault() in onWheel is ignored and the page scrolls
-  // instead of zooming. This keeps scroll-to-zoom (and trackpad pinch,
-  // which arrives as ctrlKey+wheel) on the map.
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -565,15 +698,8 @@ export function KolkataMap({
     if (e.pointerType !== "mouse") setTip(null);
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     downRef.current = { x: e.clientX, y: e.clientY, t: Date.now() };
-    // Two fingers → start pinch, cancel single-finger drag. Only pinches
-    // capture the pointer (so moves keep flowing mid-gesture); single-finger
-    // drags stay uncaptured so ward polygon taps/clicks still fire.
     if (pointersRef.current.size === 2) {
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        /* noop */
-      }
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
       const [a, b] = [...pointersRef.current.values()];
       const dist = Math.max(1, Math.hypot(a.x - b.x, a.y - b.y));
       pinchRef.current = {
@@ -585,12 +711,10 @@ export function KolkataMap({
       setDrag(null);
       return;
     }
-    // Any pointer can start a pan (mouse on PC, touch/pen on mobile);
-    // a tiny movement is still treated as a tap so ward clicks work.
     setDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
   };
+
   const handlePointerMove = (e: React.PointerEvent) => {
-    // Pinch: zoom around midpoint + pan with midpoint drift
     if (pointersRef.current.has(e.pointerId)) {
       pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
@@ -600,58 +724,44 @@ export function KolkataMap({
       const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
       const p = pinchRef.current;
       const rect = wrapRef.current?.getBoundingClientRect();
-      const z2 = Math.min(
-        MAX_Z,
-        Math.max(MIN_Z, p.startZoom * (dist / p.startDist)),
-      );
+      const z2 = Math.min(MAX_Z, Math.max(MIN_Z, p.startZoom * (dist / p.startDist)));
       setZoom(+z2.toFixed(2));
       if (rect && rect.width > 0) {
-        // Pan follows midpoint drift, scaled to viewBox units at new zoom
         const scale = W / z2 / rect.width;
-        setPan({
+        queuePan({
           x: p.startPan.x + (mid.x - p.startMid.x) * scale,
           y: p.startPan.y + (mid.y - p.startMid.y) * scale,
         });
       } else {
-        setPan({ ...p.startPan });
+        queuePan({ ...p.startPan });
       }
       return;
     }
     if (!drag || !wrapRef.current) return;
     const dx = e.clientX - drag.sx;
     const dy = e.clientY - drag.sy;
-    // Small movement = tap, not drag - don't pan, allow click
     if (Math.hypot(dx, dy) < 6) return;
     const rect = wrapRef.current.getBoundingClientRect();
-    const scaleX = vbW / rect.width,
-      scaleY = vbH / rect.height;
-    setPan({
+    const scaleX = vbW / rect.width, scaleY = vbH / rect.height;
+    queuePan({
       x: drag.ox + dx * scaleX,
       y: drag.oy + dy * scaleY,
     });
   };
+
   const endPointer = (e: React.PointerEvent) => {
     if (pointersRef.current.size === 2) {
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        /* noop */
-      }
+      try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
     }
     pointersRef.current.delete(e.pointerId);
     if (pointersRef.current.size < 2) pinchRef.current = null;
-    // Double-tap to zoom in (touch), anchored at tap point
     const down = downRef.current;
     if (down && pointersRef.current.size === 0) {
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       const dt = Date.now() - down.t;
       if (moved < 10 && dt < 400) {
         const last = lastTapRef.current;
-        if (
-          last &&
-          Date.now() - last.t < 350 &&
-          Math.hypot(e.clientX - last.x, e.clientY - last.y) < 40
-        ) {
+        if (last && Date.now() - last.t < 350 && Math.hypot(e.clientX - last.x, e.clientY - last.y) < 40) {
           lastTapRef.current = null;
           zoomAtPoint(e.clientX, e.clientY, zoom + 1);
         } else {
@@ -664,29 +774,216 @@ export function KolkataMap({
     downRef.current = null;
     setDrag(null);
   };
-  const handlePointerUp = (e: React.PointerEvent) => {
-    endPointer(e);
-  };
+  const handlePointerUp = (e: React.PointerEvent) => { endPointer(e); };
 
   const normalizedSearch = (searchQuery ?? "").trim().toLowerCase();
   const isMatch = useCallback(
-    (c: MapWard) => {
+    (c: MapZone) => {
       if (!normalizedSearch) return false;
-      return matchesWardQuery(
-        c.ward,
-        c.wardName,
-        getWardLocality(c.ward),
-        normalizedSearch,
-      );
+      return matchesZoneQuery(c, normalizedSearch);
     },
     [normalizedSearch],
   );
   const hasSearch = !!normalizedSearch;
 
-  // Ward labels  show when zoomed or when hovered/selected/search match
-  const showLabels = z > 1.2 && !isMobile ? true : z > 1.0;
+  const valueOf = useCallback(
+    (c: MapZone): number | null => {
+      if (layer === "vulnerability") return c.vulnerability;
+      if (layer === "risk") {
+        const htsiVal =
+          valuesByZone?.get(c.zoneId) ??
+          valuesByZone?.get(c.zoneId.toLowerCase()) ??
+          null;
+        const vulnVal = c.vulnerability;
+        if (htsiVal === null || vulnVal === null) return null;
+        const htsiDec = htsiVal > 1 ? htsiVal / 100 : htsiVal;
+        const vulnDec = vulnVal > 1 ? vulnVal / 100 : vulnVal;
+        return (htsiDec + vulnDec) / 2;
+      }
+      return (
+        valuesByZone?.get(c.zoneId) ??
+        valuesByZone?.get(c.zoneId.toLowerCase()) ??
+        null
+      );
+    },
+    [layer, valuesByZone],
+  );
 
-  // Ensure hover clears even when pointer is captured or leaves window
+  const showGradient = gradientEnabled;
+
+  const paintStepOf = useCallback(
+    (c: MapZone): 1 | 2 | 3 | 4 | 5 | null =>
+      stepForValue(valueOf(c), layer) ?? stepForValue(c.vulnerability, "vulnerability"),
+    [layer, valueOf],
+  );
+
+  const paintFillOf = useCallback(
+    (c: MapZone): string => {
+      const s = paintStepOf(c);
+      return s ? RISK_COLORS[s - 1] : NO_DATA;
+    },
+    [paintStepOf],
+  );
+
+  const normalFillOf = useCallback(
+    (c: MapZone): string => {
+      const s = stepForValue(valueOf(c), layer);
+      return s ? RISK_COLORS[s - 1] : NO_DATA;
+    },
+    [layer, valueOf],
+  );
+
+  /** Culling heatpoints to eliminate lag when zoomed in */
+  const locationGlows = useMemo(() => {
+    if (!showGradient) return [];
+    const stepOfZone = new Map<string, 1 | 2 | 3 | 4 | 5>();
+    for (const c of visibleCells) {
+      const s = paintStepOf(c);
+      if (s !== null) stepOfZone.set(c.zoneId, s);
+    }
+    const tileStep = (id: number, zoneId: string): 1 | 2 | 3 | 4 | 5 | undefined => {
+      let raw: number | null | undefined;
+      if (tileValues instanceof Map) raw = tileValues.get(id);
+      else if (tileValues) raw = (tileValues as Record<number, number | null>)[id];
+      if (typeof raw === "number" && Number.isFinite(raw)) {
+        if (layer === "risk") {
+          const zoneCell = visibleCells.find((c) => c.zoneId === zoneId);
+          const vulnVal = zoneCell?.vulnerability ?? null;
+          if (vulnVal !== null) {
+            const htsiDec = raw > 1 ? raw / 100 : raw;
+            const vulnDec = vulnVal > 1 ? vulnVal / 100 : vulnVal;
+            const pop = 4 * 3500;
+            const tileRisk = ((htsiDec * pop + vulnDec * pop) / 2) * pop;
+            const s = stepForValue(tileRisk, "risk");
+            if (s !== null) return s;
+          }
+        } else {
+          const s = stepForValue(raw, layer);
+          if (s !== null) return s;
+        }
+      }
+      return stepOfZone.get(zoneId);
+    };
+
+    const m = 60;
+    const vx0 = vbX - m, vx1 = vbX + vbW + m;
+    const vy0 = vbY - m, vy1 = vbY + vbH + m;
+
+    if (heatpoints && heatpoints.length > 0) {
+      const out: Array<{ id: string; x: number; y: number; r: number; step: 1 | 2 | 3 | 4 | 5 }> = [];
+      const baseR = 14 / Math.pow(z, 0.6);
+      for (let i = 0; i < heatpoints.length; i++) {
+        const hp = heatpoints[i];
+        if (!Number.isFinite(hp.lon) || !Number.isFinite(hp.lat)) continue;
+        const [sx, sy] = project(hp.lon, hp.lat, bounds);
+        if (sx < vx0 || sx > vx1 || sy < vy0 || sy > vy1) continue;
+        const step = tileStep(hp.id, hp.zoneId);
+        if (step === undefined) continue;
+        out.push({ id: `hp-${hp.id}`, x: sx, y: sy, r: baseR + ((step - 1) / 4) * (baseR * 0.8), step });
+      }
+      return out;
+    }
+    return visibleCells.flatMap((c) => {
+      const step = paintStepOf(c);
+      if (step === null) return [];
+      const t = (step - 1) / 4;
+      const b = boxById.get(c.zoneId);
+      const cen: [number, number] | null = b
+        ? [b.ccx, b.ccy]
+        : Number.isFinite(c.long) && Number.isFinite(c.lat)
+          ? ([c.long, c.lat] as [number, number])
+          : null;
+      if (!cen) return [];
+      const [sx, sy] = project(cen[0], cen[1], bounds);
+      if (sx < vx0 || sx > vx1 || sy < vy0 || sy > vy1) return [];
+      const baseR = 20 / Math.pow(z, 0.6);
+      return [{ id: c.zoneId, x: sx, y: sy, r: baseR + t * (baseR * 1.2), step }];
+    });
+  }, [showGradient, visibleCells, bounds, paintStepOf, heatpoints, tileValues, layer, boxById, vbX, vbY, vbW, vbH, z]);
+
+  const borderPaths = useMemo(() => {
+    if (!districtBorders || districtBorders.length === 0) return [];
+    return districtBorders.map((d) => {
+      let path = "";
+      for (const [x1, y1, x2, y2] of d.segments) {
+        const [ax, ay] = project(x1, y1, bounds);
+        const [bx, by] = project(x2, y2, bounds);
+        path += `M${ax.toFixed(1)} ${ay.toFixed(1)}L${bx.toFixed(1)} ${by.toFixed(1)}`;
+      }
+      return { code: d.code, path };
+    });
+  }, [districtBorders, bounds]);
+
+  const isDimmed = useCallback(
+    (c: MapZone): boolean => {
+      if (hasSearch && !isMatch(c) && c.zoneId !== selectedId) return true;
+      if (focusDistrict !== null && c.districtCode !== focusDistrict) return true;
+      return false;
+    },
+    [hasSearch, isMatch, selectedId, focusDistrict],
+  );
+
+  /** Decluttered Google-Maps-style label placement with spatial collision prevention */
+  const visibleLabels = useMemo(() => {
+    const candidates = visibleCells
+      .map((c) => {
+        const b = boxById.get(c.zoneId);
+        if (!b || b.empty) return null;
+        const isEmph = c.zoneId === selectedId || c.zoneId === hoveredId;
+        return { cell: c, box: b, isEmph };
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null);
+
+    candidates.sort((a, b) => {
+      if (a.isEmph !== b.isEmph) return a.isEmph ? -1 : 1;
+      return (b.cell.ring.length || 0) - (a.cell.ring.length || 0);
+    });
+
+    const placedCenters: Array<{ x: number; y: number }> = [];
+    const minOverlapDist = z <= 2.2 ? 85 : z <= 3.5 ? 65 : 45;
+
+    const out: Array<{
+      cell: MapZone;
+      sx: number;
+      sy: number;
+      isEmph: boolean;
+      mainLabel: string;
+      full: string;
+      showLoc: boolean;
+    }> = [];
+
+    for (const { cell: c, box: b, isEmph } of candidates) {
+      if (!isEmph) {
+        if (z < 2.0) continue;
+        if (z < 3.2 && c.ring.length < 35) continue;
+      }
+
+      const screenX = ((b.pcx - vbX) / vbW) * (boxW || W);
+      const screenY = ((b.pcy - vbY) / vbH) * (boxH || H);
+
+      if (!isEmph) {
+        let collides = false;
+        for (const p of placedCenters) {
+          if (Math.hypot(p.x - screenX, p.y - screenY) < minOverlapDist) {
+            collides = true;
+            break;
+          }
+        }
+        if (collides) continue;
+      }
+
+      placedCenters.push({ x: screenX, y: screenY });
+
+      const full = zoneLabel(c);
+      const mainLabel = full.length > 14 ? full.slice(0, 13) + "…" : full;
+      const showLoc = isEmph && full.length > 14;
+
+      out.push({ cell: c, sx: b.pcx, sy: b.pcy, isEmph, mainLabel, full, showLoc });
+    }
+
+    return out;
+  }, [visibleCells, boxById, selectedId, hoveredId, z, vbX, vbY, vbW, vbH, boxW, boxH]);
+
   useEffect(() => {
     const clear = () => {
       onHover(null);
@@ -720,7 +1017,6 @@ export function KolkataMap({
       }}
       onPointerDown={handlePointerDown}
       onDoubleClick={(e) => {
-        // Desktop double-click to zoom in, anchored at cursor (not on controls)
         if (isControlTarget(e)) return;
         zoomAtPoint(e.clientX, e.clientY, zoom + 1);
       }}
@@ -729,7 +1025,6 @@ export function KolkataMap({
         willChange: drag ? "transform" : undefined,
       }}
     >
-      {/* Map tiles subtle grid */}
       <div
         className="absolute inset-0 opacity-[0.04]"
         style={{
@@ -747,7 +1042,6 @@ export function KolkataMap({
         role="img"
         aria-label="Kolkata ward map"
       >
-        {/* Invisible hit layer: clears hover over empty (non-ward) areas */}
         <rect
           x={vbX}
           y={vbY}
@@ -759,7 +1053,6 @@ export function KolkataMap({
             setTip(null);
           }}
         />
-        {/* Real base map (CARTO light/dark, OSM data) under the wards */}
         {tiles.map((tl) => (
           <image
             key={tl.key}
@@ -772,81 +1065,121 @@ export function KolkataMap({
             preserveAspectRatio="none"
           />
         ))}
-        {/* Base-map tiles carry their own place labels — none drawn here. */}
-        {cells.map((c) => (
+        {visibleCells.map((c) => (
           <WardPolygon
-            key={c.wardId}
+            key={c.zoneId}
             cell={c}
             bounds={bounds}
             zoom={z}
-            layer={layer}
-            isSel={c.wardId === selectedId}
-            isHov={c.wardId === hoveredId}
+            isSel={c.zoneId === selectedId}
+            isHov={c.zoneId === hoveredId}
             isSearchMatch={isMatch(c)}
-            dimmed={hasSearch && !isMatch(c) && c.wardId !== selectedId}
+            isFocusedDistrict={focusDistrict !== null && c.districtCode === focusDistrict}
+            dimmed={isDimmed(c)}
+            softened={showGradient}
+            fill={showGradient ? paintFillOf(c) : normalFillOf(c)}
             onHover={onHover}
             onSelect={onSelect}
             onMove={onMove}
           />
         ))}
-        {/* Ward name labels  centroid-placed, non-scaling text */}
-        {cells.map((c) => {
-          const cen = centroid(c);
-          if (!cen) return null;
-          const [sx, sy] = project(cen[0], cen[1], bounds);
-          const show =
-            showLabels ||
-            c.wardId === selectedId ||
-            c.wardId === hoveredId ||
-            isMatch(c);
-          if (!show) return null;
-          const loc = getWardLocality(c.ward);
-          const numLabel = c.ward !== null ? String(c.ward) : String(c.wardId);
-          // Hide dense small wards' labels at low zoom to avoid clutter
-          const area = c.ring.length;
-          if (!showLabels && area < 40) return null;
-          const isEmph = c.wardId === selectedId || isMatch(c);
-          const showLoc = loc && (isEmph || z > 1.8);
-          // All-white labels; legibility on bright fills comes from the
-          // dark .map-label halo (~3px screen).
+        {showGradient && (
+          <g style={{ pointerEvents: "none" }}>
+            <defs>
+              {[1, 2, 3, 4, 5].map((s) => (
+                <radialGradient key={`gs-${s}`} id={`glow-step-${s}`}>
+                  <stop offset="0%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0.70} />
+                  <stop offset="55%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0.32} />
+                  <stop offset="100%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0} />
+                </radialGradient>
+              ))}
+            </defs>
+            {locationGlows.map((g) => (
+              <circle
+                key={`gc-${g.id}`}
+                cx={g.x}
+                cy={g.y}
+                r={g.r}
+                fill={`url(#glow-step-${g.step})`}
+              />
+            ))}
+          </g>
+        )}
+        {borderPaths.map((b) => {
+          const focused = focusDistrict !== null && b.code === focusDistrict;
+          const dimmed = focusDistrict !== null && b.code !== focusDistrict;
+          const distStroke = Math.min(2.4, Math.max(0.7, 0.7 + Math.max(0, Math.log2(Math.max(0.5, z))) * 0.4));
+          return (
+            <path
+              key={`bd-${b.code}`}
+              d={b.path}
+              fill="none"
+              stroke={focused ? "#0f172a" : "#475569"}
+              strokeWidth={focused ? distStroke + 0.8 : distStroke}
+              opacity={dimmed ? 0.20 : focused ? 0.85 : 0.60}
+              strokeLinejoin="round"
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+              style={{ pointerEvents: "none" }}
+            />
+          );
+        })}
+        {/* GPS location dot — responsive radii with zoom */}
+        {gps !== null &&
+          Number.isFinite(gps.lon) &&
+          Number.isFinite(gps.lat) &&
+          (() => {
+            const [gx, gy] = project(gps.lon, gps.lat, bounds);
+            const rHalo = labelUnits(14);
+            const rDot = labelUnits(6);
+            const sw = labelUnits(2);
+            return (
+              <g style={{ pointerEvents: "none" }}>
+                <circle cx={gx} cy={gy} r={rHalo} fill="#2563eb" opacity={0.35} className="gps-halo" />
+                <circle cx={gx} cy={gy} r={rDot} fill="#2563eb" stroke="#ffffff" strokeWidth={sw} />
+              </g>
+            );
+          })()}
+        {/* Decluttered Google-Maps-style zone labels */}
+        {visibleLabels.map(({ cell: c, sx, sy, isEmph, mainLabel, full, showLoc }) => {
           const ink = "#ffffff";
           return (
-            <g key={`lbl-${c.wardId}`} style={{ pointerEvents: "none" }}>
+            <g key={`lbl-${c.zoneId}`} style={{ pointerEvents: "none" }}>
               <text
                 x={sx}
-                y={showLoc ? sy - 5 / z : sy}
+                y={showLoc ? sy - labelUnits(4) : sy}
                 textAnchor="middle"
                 dominantBaseline="central"
-                fontSize={Math.max(5.5, 10 / Math.pow(z, 0.35))}
-                fontWeight={isEmph ? 800 : 700}
+                fontSize={labelUnits(10)}
+                fontWeight={isEmph ? 800 : 600}
                 fill={ink}
                 className="map-label"
-                strokeWidth={3 / z}
+                strokeWidth={labelUnits(1.4)}
                 style={{
                   fontFamily: "var(--font-sans), Archivo, sans-serif",
                   userSelect: "none",
                 }}
               >
-                {numLabel}
+                {mainLabel}
               </text>
               {showLoc && (
                 <text
                   x={sx}
-                  y={sy + 8 / z}
+                  y={sy + labelUnits(7)}
                   textAnchor="middle"
                   dominantBaseline="central"
-                  fontSize={Math.max(4.5, 7 / Math.pow(z, 0.35))}
+                  fontSize={labelUnits(8)}
                   fontWeight={600}
                   fill={ink}
-                  opacity={0.82}
+                  opacity={0.85}
                   className="map-label"
-                  strokeWidth={2.5 / z}
+                  strokeWidth={labelUnits(1.2)}
                   style={{
                     fontFamily: "var(--font-sans), Archivo, sans-serif",
                     userSelect: "none",
                   }}
                 >
-                  {loc!.length > 13 ? loc!.slice(0, 12) + "…" : loc!}
+                  {full.length > 26 ? full.slice(0, 25) + "…" : full}
                 </text>
               )}
             </g>
@@ -854,259 +1187,94 @@ export function KolkataMap({
         })}
       </svg>
 
-      {/* Scale bar — real-world distance for the current zoom */}
-      {(() => {
-        const s = scaleForWidth(vbW);
-        if (!s) return null;
-        return (
-          <div
-            className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2"
-            aria-hidden
-          >
-            <div className="mb-0.5 rounded bg-card/70 px-1 text-center text-[10px] font-bold tabular-nums text-foreground/80">
-              {s.label}
-            </div>
-            <div
-              className="mx-auto h-1.5 rounded-sm border border-foreground/60 border-t-0 bg-foreground/10"
-              style={{ width: s.px }}
-            />
-          </div>
-        );
-      })()}
-
-      {/* Soft vignette for depth (non-interactive) */}
+      {/* Left Map Controls (Layer Selection & Level Bar Legend) */}
       <div
-        className="pointer-events-none absolute inset-0 shadow-[inset_0_0_110px_rgba(15,23,42,0.14)]"
-        aria-hidden
-      />
-
-      {/* Tile attribution (required by Esri/OSM terms) */}
-      <div
-        className="pointer-events-none absolute left-3 top-3 rounded bg-card/80 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground backdrop-blur"
-        aria-hidden
+        data-map-control="true"
+        onDoubleClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute bottom-4 left-3 z-20 flex flex-col items-start gap-2"
       >
-        © Esri · © OpenStreetMap contributors
-      </div>
-
-      {/* North indicator */}
-      <div
-        className="pointer-events-none absolute right-3 top-3 flex h-9 w-9 flex-col items-center justify-center rounded-full border bg-card/90 leading-none shadow-lg backdrop-blur"
-        aria-hidden
-      >
-        <Navigation className="h-3 w-3 fill-primary text-primary" />
-        <span className="text-[8px] font-black tracking-wide">N</span>
-      </div>
-
-      {/* Zoom & Layer controls — Google Maps style vertical stack */}
-      <div
-        data-map-control
-        onMouseEnter={() => {
-          onHover(null);
-          setTip(null);
-        }}
-        className="absolute bottom-4 right-3 z-20 flex flex-col overflow-hidden rounded-xl border bg-card shadow-lg will-change-transform"
-      >
+        {/* Layer Selection Button */}
         {onOpenControls && (
-          <>
-            <button
-              onClick={onOpenControls}
-              className="flex h-9 w-9 items-center justify-center hover:bg-muted text-primary"
-              aria-label="Map layers & controls"
-              title="Map layers & controls"
-            >
-              <Layers className="h-4 w-4" />
-            </button>
-            <div className="h-px bg-border" />
-          </>
-        )}
-        <button
-          onClick={() => {
-            const rect = wrapRef.current?.getBoundingClientRect();
-            if (rect) zoomAtPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, zoom + 0.6);
-            else setZoom((v) => Math.min(MAX_Z, +(v + 0.6).toFixed(1)));
-          }}
-          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
-          aria-label="Zoom in"
-        >
-          <ZoomIn className="h-4 w-4" />
-        </button>
-        <div className="h-px bg-border" />
-        <button
-          onClick={() => {
-            const rect = wrapRef.current?.getBoundingClientRect();
-            if (rect) zoomAtPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, zoom - 0.6);
-            else setZoom((v) => Math.max(MIN_Z, +(v - 0.6).toFixed(1)));
-          }}
-          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
-          aria-label="Zoom out"
-          disabled={z <= MIN_Z + 0.01}
-        >
-          <ZoomOut className="h-4 w-4 opacity-60" />
-        </button>
-        <div className="h-px bg-border" />
-        <button
-          onClick={() => {
-            setZoom(1);
-            setPan({ x: 0, y: 0 });
-          }}
-          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
-          aria-label="Reset view"
-        >
-          <Maximize2 className="h-3.5 w-3.5" />
-        </button>
-        <div className="h-px bg-border" />
-        <button
-          onClick={() => {
-            const first = cells[0];
-            if (first) {
-              const cb = centroid(first);
-              if (cb) {
-                const [sx, sy] = project(cb[0], cb[1], bounds);
-                setPan({
-                  x: W / 2 - sx - vbW / 2 + baseX,
-                  y: H / 2 - sy - vbH / 2 + baseY,
-                });
-                setZoom(2);
-              }
-            }
-          }}
-          className="flex h-9 w-9 items-center justify-center hover:bg-muted"
-          aria-label="Locate Kolkata"
-        >
-          <LocateFixed className="h-4 w-4" />
-        </button>
-      </div>
-
-      {/* Legend  fixed categories, not decimal-sensitive */}
-      <div data-map-control className="absolute bottom-4 left-3 flex items-center gap-1.5 rounded-full border bg-card/90 px-3 py-1.5 shadow-lg backdrop-blur">
-        <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-          {layer === "thermal"
-            ? "HTSI"
-            : layer === "wbgt"
-              ? "WBGT"
-              : layer === "hi"
-                ? "H-Index"
-                : layer === "utci"
-                  ? "UTCI"
-                  : layer === "temp"
-                    ? "Temp"
-                    : layer === "humidity"
-                      ? "Humidity"
-                      : layer === "wind"
-                        ? "Wind"
-                        : "Solar"}
-        </span>
-        {RISK_COLORS.map((c) => (
-          <span
-            key={c}
-            className="h-2.5 w-6 rounded-full"
-            style={{ background: c }}
-          />
-        ))}
-        <span className="ml-1 hidden text-[10px] tabular-nums text-muted-foreground sm:inline">
-          {layer === "wbgt"
-            ? "22°→33°C"
-            : layer === "hi"
-              ? "27°→45°C"
-              : layer === "utci"
-                ? "26°→44°C"
-                : layer === "temp"
-                  ? "28°→38°C"
-                  : layer === "humidity"
-                    ? "40%→85%"
-                    : layer === "wind"
-                      ? "4.0→0.8 m/s"
-                      : layer === "solar"
-                        ? "200→800 W/m²"
-                        : "Low → Extreme"}
-        </span>
-      </div>
-
-      {/* Scroll hint */}
-      <div className="pointer-events-none absolute left-1/2 top-3 hidden -translate-x-1/2 rounded-full bg-foreground px-3 py-1 text-xs text-background opacity-0 transition-opacity peer-hover:opacity-100 md:block">
-        Scroll to zoom · Drag to pan · Double-click to zoom in
-      </div>
-
-      {/* Hover tooltip  small popup summary */}
-      <AnimatePresence>
-        {tip && !isMobile && (
-          <motion.div
-            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
-            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0 }}
-            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
-            transition={{ duration: reduceMotion ? 0.08 : 0.12 }}
-            className="pointer-events-none absolute z-10 w-[220px] rounded-xl border bg-popover p-3 shadow-xl will-change-transform"
-            style={{ left: tip.x, top: tip.y }}
+          <button
+            onClick={onOpenControls}
+            className="flex h-10 items-center gap-2 rounded-full border border-border/80 bg-card/95 px-3.5 shadow-2xl backdrop-blur-xl transition-all duration-150 active:scale-95 hover:bg-muted hover:border-border"
+            aria-label="Open map layers"
           >
-            <p className="text-xs font-extrabold leading-none">
-              {tip.cell.ward !== null ? `Ward ${tip.cell.ward}` : `Location ${tip.cell.wardId}`}
-            </p>
-            {(() => {
-              const loc = getWardLocality(tip.cell.ward);
-              return loc ? (
-                <p className="mt-0.5 truncate text-[11px] font-medium text-primary">
-                  {loc}
-                </p>
-              ) : null;
-            })()}
-            {(() => {
-              let valStr = "-";
-              let labelStr = "HTSI Index";
-              if (layer === "wbgt") {
-                labelStr = "WBGT Index";
-                const v = tip.cell.wbgt;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
-              } else if (layer === "hi") {
-                labelStr = "Heat Index";
-                const v = tip.cell.heatIndex;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
-              } else if (layer === "utci") {
-                labelStr = "UTCI Index";
-                const v = tip.cell.utci;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
-              } else if (layer === "temp") {
-                labelStr = "Temperature";
-                const v = tip.cell.temp ?? tip.cell.heatIndex;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)}°C` : "-";
-              } else if (layer === "humidity") {
-                labelStr = "Relative Humidity";
-                const v = tip.cell.humidity;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(0)}%` : "-";
-              } else if (layer === "wind") {
-                labelStr = "Wind Speed";
-                const v = tip.cell.wind;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(1)} m/s` : "-";
-              } else if (layer === "solar") {
-                labelStr = "Solar Irradiance";
-                const v = tip.cell.solar;
-                valStr = typeof v === "number" && Number.isFinite(v) ? `${v.toFixed(0)} W/m²` : "-";
-              } else {
-                labelStr = "HTSI Index";
-                const v = tip.cell.thermal;
-                valStr = typeof v === "number" && Number.isFinite(v) ? (v > 1 ? v.toFixed(2) : (v * 100).toFixed(2)) : "-";
-              }
-              const step = layerStepFor(tip.cell, layer) ?? 1;
-
-              return (
-                <>
-                  <div className="mt-2 flex items-center gap-2">
-                    <span className="text-xl font-black tabular-nums leading-none">
-                      {valStr}
-                    </span>
-                    <RiskBadge step={step} />
-                  </div>
-                  <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
-                    {labelStr}
-                  </p>
-                </>
-              );
-            })()}
-            <p className="mt-0.5 text-[10px] font-medium text-primary">
-              Click for full telemetry →
-            </p>
-          </motion.div>
+            <div className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Layers className="h-3.5 w-3.5" />
+            </div>
+            <span className="text-xs font-black uppercase tracking-wider text-foreground">
+              {layerShortName(layer ?? "risk")}
+            </span>
+            <span className="h-2 w-2 rounded-full bg-primary" />
+          </button>
         )}
-      </AnimatePresence>
+
+        {/* Level Bar (Color Ramp Legend) */}
+        <div className="flex items-center gap-2 rounded-full border border-border/80 bg-card/95 px-3.5 py-1.5 shadow-2xl backdrop-blur-xl">
+          <span className="text-[10px] font-black uppercase tracking-wider text-foreground">
+            Level
+          </span>
+          <div className="flex h-2.5 w-20 overflow-hidden rounded-full border border-border/40 shadow-inner">
+            {RISK_COLORS.map((col, i) => (
+              <span
+                key={col}
+                className="h-full flex-1"
+                style={{ background: col }}
+                title={`Step ${i + 1}`}
+              />
+            ))}
+          </div>
+          <div className="flex items-center gap-1 text-[10px] font-bold text-muted-foreground">
+            <span>Low</span>
+            <span>→</span>
+            <span className="text-red-600 dark:text-red-400 font-extrabold">High</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Right Map Controls (Zoom In/Out & Location Buttons) */}
+      <div
+        data-map-control="true"
+        onDoubleClick={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute bottom-4 right-3 z-20 flex flex-col items-end gap-2"
+      >
+        <div className="flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card/95 shadow-2xl backdrop-blur-xl">
+          <button
+            onClick={() => setZoom((z) => Math.min(MAX_Z, z * 1.35))}
+            className="flex h-9 w-9 items-center justify-center border-b border-border/60 transition-colors hover:bg-muted text-foreground"
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            <ZoomIn className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setZoom((z) => Math.max(MIN_Z, z / 1.35))}
+            className="flex h-9 w-9 items-center justify-center transition-colors hover:bg-muted text-foreground"
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            <ZoomOut className="h-4 w-4" />
+          </button>
+        </div>
+
+        {gps && (
+          <button
+            onClick={() => {
+              const [gx, gy] = project(gps.lon, gps.lat, bounds);
+              setPan({ x: W / 2 - gx * 2.5, y: H / 2 - gy * 2.5 });
+              setZoom(2.5);
+            }}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-border/80 bg-card/95 shadow-2xl backdrop-blur-xl transition-all duration-150 active:scale-95 hover:bg-muted"
+            aria-label="Locate me"
+            title="Center on my location"
+          >
+            <LocateFixed className="h-4 w-4 text-blue-600" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

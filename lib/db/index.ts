@@ -5,17 +5,14 @@ import * as schema from "./schema";
 /**
  * Pooled Postgres client for Vercel serverless (Node.js runtime).
  *
- * - Uses `postgres-js` with `max: 1`-style pooling per invocation-friendly
- *   defaults; serverless functions are stateless/short-lived so we must not
- *   open a raw long-lived pool per invocation.
+ * - Uses `postgres-js` with serverless-friendly pooling; functions are
+ *   stateless/short-lived so we must not open a raw long-lived pool.
  * - Connection string comes from POSTGRES_URL (Vercel project settings).
  * - Reuses the client across invocations via the global cache so warm
  *   invocations don't reconnect on every request.
- * - NOTE on naive timestamps: `weather.timestamp` is IST wall clock matched
- *   with `mode: "string"` (see schema). Do NOT add driver-level timestamp
- *   parsers here — drizzle's session overrides them and its Date mapping is
- *   host-TZ-dependent for naive columns. All interpretation lives in
- *   parseISTWall()/toISTWall() (lib/analysis).
+ * - Tables are backend-owned (`forecast` + `analysis`); this project only
+ *   reads them and never writes. Forecast `date` columns are compared as
+ *   YYYY-MM-DD strings (drizzle `mode: "string"`).
  */
 
 const globalForDb = globalThis as unknown as {

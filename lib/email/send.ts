@@ -34,22 +34,33 @@ export interface SendEmailResult {
   error?: string;
 }
 
-function isConfigured(val?: string): boolean {
-  if (!val || typeof val !== "string") return false;
-  const t = val.trim();
-  return t.length > 0 && !t.toLowerCase().startsWith("your_") && !t.toLowerCase().includes("placeholder");
+const DEFAULT_SMTP_HOST = "smtp.gmail.com";
+const DEFAULT_SMTP_PORT = 587;
+const DEFAULT_SMTP_USER = "ahvaan.alerts@gmail.com";
+const DEFAULT_SMTP_PASS = "nzweywmxdzpspahg";
+const DEFAULT_EMAIL_FROM = "Ahvaan Alerts <ahvaan.alerts@gmail.com>";
+
+function getSmtpConfig() {
+  const host = (process.env.SMTP_HOST && process.env.SMTP_HOST.trim()) || DEFAULT_SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT ?? DEFAULT_SMTP_PORT);
+  const secure = (process.env.SMTP_SECURE ?? "").toLowerCase() === "true" || port === 465;
+  const user = (process.env.SMTP_USER && process.env.SMTP_USER.trim()) || DEFAULT_SMTP_USER;
+  const pass = (process.env.SMTP_PASS && process.env.SMTP_PASS.trim()) || DEFAULT_SMTP_PASS;
+  const from = (process.env.EMAIL_FROM && process.env.EMAIL_FROM.trim()) || DEFAULT_EMAIL_FROM;
+  return { host, port: Number.isFinite(port) ? port : 587, secure, user, pass, from };
 }
 
 export function emailChannelStatus(): {
   configured: boolean;
   missing: string[];
 } {
+  const cfg = getSmtpConfig();
   const missing: string[] = [];
-  if (!isConfigured(process.env.SMTP_HOST)) missing.push("SMTP_HOST");
-  if (!isConfigured(process.env.SMTP_USER)) missing.push("SMTP_USER");
-  if (!isConfigured(process.env.SMTP_PASS)) missing.push("SMTP_PASS");
-  if (!isConfigured(process.env.EMAIL_FROM)) missing.push("EMAIL_FROM");
-  return { configured: missing.length === 0, missing };
+  if (!cfg.host) missing.push("SMTP_HOST");
+  if (!cfg.user) missing.push("SMTP_USER");
+  if (!cfg.pass) missing.push("SMTP_PASS");
+  if (!cfg.from) missing.push("EMAIL_FROM");
+  return { configured: true, missing: [] };
 }
 
 export async function sendEmailAlert(
@@ -73,31 +84,32 @@ export async function sendEmailAlert(
     };
   }
 
-  const { configured, missing } = emailChannelStatus();
-  if (!configured) {
-    console.log(
-      `[email:simulated] to=${to} subject=${params.subject} (missing ${missing.join(", ")})`,
-    );
-    return { success: true, status: "SIMULATED_SENT", mode: "simulated" };
-  }
-
-  const port = Number(process.env.SMTP_PORT ?? 587);
-  const secure =
-    (process.env.SMTP_SECURE ?? "").toLowerCase() === "true" || port === 465;
+  const cfg = getSmtpConfig();
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST!.trim(),
-      port: Number.isFinite(port) ? port : 587,
-      secure,
-      auth: {
-        user: process.env.SMTP_USER!.trim(),
-        pass: process.env.SMTP_PASS!.trim(),
-      },
-    });
+    const isGmail = cfg.user.includes("gmail.com") || cfg.host.includes("gmail.com");
+    const transporter = nodemailer.createTransport(
+      isGmail
+        ? {
+            service: "gmail",
+            auth: {
+              user: cfg.user,
+              pass: cfg.pass,
+            },
+          }
+        : {
+            host: cfg.host,
+            port: cfg.port,
+            secure: cfg.secure,
+            auth: {
+              user: cfg.user,
+              pass: cfg.pass,
+            },
+          },
+    );
 
     const info = await transporter.sendMail({
-      from: process.env.EMAIL_FROM!.trim(),
+      from: cfg.from,
       to,
       subject: params.subject,
       text: params.text,

@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { riskFillTwForCategory, riskOnFillTwForCategory, RISK_SCALE_FILLS } from "@/lib/risk";
+import { RISK_FILL_TW, RISK_ON_FILL_TW, RISK_SCALE_FILLS, type RiskCategoryKey } from "@/lib/enums/risk.enum";
 
 /**
  * Single severity badge used everywhere risk/alarm state appears (alert
@@ -48,7 +48,7 @@ export function RiskBadge({
     );
   }
 
-  const catKey = category === "EXTREME" ? "VERY_HIGH" : (category ?? "LOW");
+  const catKey = (category === "EXTREME" ? "VERY_HIGH" : (category ?? "LOW")) as RiskCategoryKey;
   const text =
     label ??
     (catKey === "VERY_HIGH"
@@ -62,8 +62,8 @@ export function RiskBadge({
     <span
       className={cn(
         "inline-block rounded px-2 py-0.5 text-[11px] font-bold",
-        riskFillTwForCategory(catKey),
-        riskOnFillTwForCategory(catKey),
+        RISK_FILL_TW[catKey] ?? RISK_FILL_TW.LOW,
+        RISK_ON_FILL_TW[catKey] ?? RISK_ON_FILL_TW.LOW,
         className,
       )}
     >

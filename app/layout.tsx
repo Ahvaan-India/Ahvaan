@@ -16,7 +16,6 @@ export const metadata: Metadata = {
 
 import { WardProvider } from "@/lib/wardContext";
 import { NavProvider } from "@/lib/navContext";
-import { ChatbotWidget } from "@/components/ChatbotWidget";
 
 export default function RootLayout({
   children,
@@ -35,7 +34,6 @@ export default function RootLayout({
       <body className={archivo.variable}>
         <WardProvider>
           <NavProvider>{children}</NavProvider>
-          <ChatbotWidget />
         </WardProvider>
       </body>
     </html>

@@ -215,62 +215,47 @@ export async function withRedisCache<T>(
   }
 }
 
+/**
+ * Process-memory TTL cache for NON-analysis data (dates, raw-weather
+ * fields). Redis is reserved strictly for backend analysis payloads.
+ */
+const localStore = new Map<string, { data: unknown; exp: number }>();
+
+export async function withMemoryCache<T>(
+  key: string,
+  ttlSeconds: number,
+  fn: () => Promise<T>,
+): Promise<{ data: T; cached: boolean }> {
+  const hit = localStore.get(key);
+  if (hit && Date.now() < hit.exp) return { data: hit.data as T, cached: true };
+  const data = await fn();
+  if (data !== null && data !== undefined) {
+    localStore.set(key, { data, exp: Date.now() + ttlSeconds * 1000 });
+    if (localStore.size > 200) {
+      const first = localStore.keys().next().value as string | undefined;
+      if (first) localStore.delete(first);
+    }
+  }
+  return { data, cached: false };
+}
+
 // ---------------------------------------------------------------------------
-// Key names + TTLs (single place so invalidation stays correct)
+// Key names + TTLs (single place so invalidation stays correct).
+// Redis keys exist ONLY for backend analysis payloads.
 // ---------------------------------------------------------------------------
 
 export const REDIS_TTL = {
-  analysisDay: 6 * 3_600, // engine days are immutable once computed
-  location: 3_600,
-  population: 3_600,
-  weatherWindow: 300, // model data refreshes ~hourly
-  wards: 3_600,
-  board: 300, // city board: per-ward ranges + in-memory math, rebuilt at most every 5 min (was 120 → DB storm)
-  heatmap: 120, // was 60 → halves board rebuilds on dashboard load
-  summary: 120, // was 60
-  forecast: 300, // per-ward outlook (slowest single-ward read) was 120
-  telemetry: 120, // per-ward detail panel (re-requested on every hover) was 60
-  trend: 600, // history series move slowly was 300
+  field: 600, // zone-aggregated analysis field per (date, layer)
+  zoneDetail: 300, // zone detail incl. analysis (short: backend backfills progressively)
+  memDates: 600, // forecast dates (memory only)
+  memField: 600, // raw-weather field per (date, layer) (memory only)
 } as const;
 
 export const redisKeys = {
-  analysis: (locationId: number, date: string) =>
-    `ahvaan:analysis:${locationId}:${date}`,
-  analysisRange: (locationId: number, from: string, to: string) =>
-    `ahvaan:analysis:${locationId}:${from}:${to}`,
-  showcase: (locationId: number) => `ahvaan:showcase:${locationId}`,
-  location: (id: number) => `ahvaan:loc:${id}`,
-  population: (id: number) => `ahvaan:pop:${id}`,
-  weatherWindow: (id: number, hours: number) => `ahvaan:wx:${id}:${hours}`,
-  wards: "ahvaan:wards",
-  // v2 bump: previous payloads cached polluted UTCI 2411.4 (analysis pa-unit bug) — force miss.
-  heatmap: "ahvaan:heatmap:v2",
-  summary: "ahvaan:summary:v2",
-};
-
-export async function invalidateAnalysis(
-  locationId: number,
-  date?: string,
-): Promise<void> {
-  if (date) {
-    await redisDel(redisKeys.analysis(locationId, date));
-  } else {
-    await redisDel(`ahvaan:analysis:${locationId}:*`);
-  }
-  await redisDel(redisKeys.showcase(locationId));
-  await redisDel(`ahvaan:telemetry:${locationId}`);
-  await redisDel(redisKeys.heatmap);
-  await redisDel(redisKeys.summary);
-  await redisDel("ahvaan:board:*");
-}
-
-export async function invalidateWard(locationId: number): Promise<void> {
-  await redisDel(redisKeys.location(locationId));
-  await redisDel(redisKeys.population(locationId));
-  await redisDel(`ahvaan:wx:${locationId}:*`);
-  await invalidateAnalysis(locationId);
-  await redisDel(redisKeys.heatmap);
-  await redisDel(redisKeys.summary);
-  await redisDel(redisKeys.wards);
-  await redisDel("ahvaan:board:*");
-}
+  // Redis-backed (analysis only).
+  field: (date: string, layer: string) => `ahvaan:field:${date}:${layer}`,
+  zoneDetail: (ulid: string) => `ahvaan:zone:${ulid}`,
+  // Memory-backed (never touch Redis).
+  memDates: "ahvaan:mem:dates",
+  memField: (date: string, layer: string) => `ahvaan:mem:field:${date}:${layer}`,
+} as const;

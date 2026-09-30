@@ -61,22 +61,28 @@ function SideFooter() {
   );
 }
 
-export function LeftNav() {
+export function LeftNav({ overlay = false }: { overlay?: boolean }) {
   const { navOpen: open, setNavOpen: setOpen } = useNav();
 
   return (
     <>
-      {/* Mobile: backdrop + drawer (navbar z-40, drawer above) */}
+      {/* Backdrop (mobile only by default; all screens in overlay mode) */}
       {open && (
         <div
-          className="fixed inset-0 z-[70] bg-black/30 lg:hidden"
+          className={cn(
+            "fixed inset-0 z-[70] bg-black/30",
+            !overlay && "lg:hidden",
+          )}
           onClick={() => setOpen(false)}
         />
       )}
 
+      {/* Drawer (mobile only by default; all screens in overlay mode, where
+          it floats over the fullscreen map Google-Maps-style) */}
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-[70] flex w-[260px] flex-col border-r bg-card shadow-2xl transition-transform lg:hidden",
+          "fixed inset-y-0 left-0 z-[70] flex w-[260px] flex-col border-r bg-card shadow-2xl transition-transform",
+          !overlay && "lg:hidden",
           open ? "translate-x-0" : "-translate-x-full",
         )}
       >
@@ -118,13 +124,38 @@ export function LeftNav() {
         <SideFooter />
       </aside>
 
-      {/* Desktop: persistent sidebar with nav + theme */}
-      <aside className="hidden w-60 shrink-0 flex-col border-r bg-card lg:flex">
-        <nav className="flex-1 space-y-1 p-3">
-          <NavLinks />
-        </nav>
-        <SideFooter />
-      </aside>
+      {/* Desktop: persistent sidebar (skipped in overlay mode — the maps
+          page floats the drawer over the fullscreen map instead) */}
+      {!overlay && (
+        <aside className="hidden w-60 shrink-0 flex-col border-r bg-card lg:flex">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <Link
+              href="/maps"
+              className="flex items-center gap-2 transition-opacity hover:opacity-90"
+            >
+              <img
+                src="/logo.png"
+                alt="Ahvaan logo"
+                width={32}
+                height={32}
+                className="h-8 w-8 rounded-lg shadow-sm"
+              />
+              <span className="flex flex-col leading-none">
+                <span className="text-[14px] font-extrabold tracking-tight">
+                  Ahvaan
+                </span>
+                <span className="text-[10px] font-semibold tracking-widest text-muted-foreground">
+                  KOLKATA
+                </span>
+              </span>
+            </Link>
+          </div>
+          <nav className="flex-1 space-y-1 p-3">
+            <NavLinks />
+          </nav>
+          <SideFooter />
+        </aside>
+      )}
     </>
   );
 }

@@ -10,7 +10,9 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "sync:zones": "tsx scripts/sync-zones.ts",
+    "auth:setup": "tsx scripts/auth-setup.ts"
   },
   "dependencies": {
     "@radix-ui/react-select": "^2.3.7",
@@ -24,6 +26,7 @@
     "ioredis": "^6.0.0",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.42.0",
+    "mongodb": "^7.7.0",
     "next": "^15.1.6",
     "nodemailer": "^10.0.10",
     "postcss": "^8.5.28",

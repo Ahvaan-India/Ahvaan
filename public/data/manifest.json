@@ -1,0 +1,36 @@
+{
+  "generatedAt": "2026-09-30T11:00:41.144Z",
+  "dates": [
+    "2026-09-30",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04",
+    "2026-10-05"
+  ],
+  "districts": [
+    {
+      "code": "337",
+      "name": "North Twenty Four Parganas",
+      "zones": 1634,
+      "heatpoints": 4125
+    },
+    {
+      "code": "341",
+      "name": "Haora",
+      "zones": 788,
+      "heatpoints": 1532
+    },
+    {
+      "code": "342",
+      "name": "Kolkata",
+      "zones": 141,
+      "heatpoints": 220
+    }
+  ],
+  "counts": {
+    "zones": 2563,
+    "heatpoints": 5877,
+    "dates": 6
+  }
+}

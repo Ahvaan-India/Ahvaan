@@ -112,6 +112,23 @@
     stroke: rgb(15 23 42 / 0.62);
     stroke-linejoin: round;
   }
+  /* GPS fix marker: expanding halo + solid dot. */
+  .gps-halo {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: gps-ping 2s ease-out infinite;
+  }
+  @keyframes gps-ping {
+    0% {
+      opacity: 0.7;
+      transform: scale(0.4);
+    }
+    80%,
+    100% {
+      opacity: 0;
+      transform: scale(1.8);
+    }
+  }
   .fcard.LOW {
     background: hsl(var(--cat-LOW-bg));
   }
