@@ -169,49 +169,57 @@ export function stepForValue(
   if (layer === "wbgt") {
     if (v >= 33) return 5;
     if (v >= 30) return 4;
-    if (v >= 27) return 2;
+    if (v >= 28) return 3;
+    if (v >= 25) return 2;
     return 1;
   }
   if (layer === "hi") {
     if (v >= 45) return 5;
     if (v >= 39) return 4;
-    if (v >= 33) return 2;
+    if (v >= 35) return 3;
+    if (v >= 30) return 2;
     return 1;
   }
   if (layer === "utci") {
     if (v >= 44) return 5;
     if (v >= 38) return 4;
-    if (v >= 32) return 2;
+    if (v >= 34) return 3;
+    if (v >= 28) return 2;
     return 1;
   }
   if (layer === "wbt") {
     if (v >= 30) return 5;
     if (v >= 27) return 4;
-    if (v >= 24) return 2;
+    if (v >= 25) return 3;
+    if (v >= 22) return 2;
     return 1;
   }
   if (layer === "temp") {
-    if (v >= 40) return 5;
-    if (v >= 37) return 4;
-    if (v >= 32) return 2;
+    if (v >= 39) return 5;
+    if (v >= 35) return 4;
+    if (v >= 31) return 3;
+    if (v >= 27) return 2;
     return 1;
   }
   if (layer === "humidity") {
     if (v >= 85) return 5;
-    if (v >= 70) return 4;
-    if (v >= 55) return 2;
+    if (v >= 75) return 4;
+    if (v >= 65) return 3;
+    if (v >= 50) return 2;
     return 1;
   }
   if (layer === "wind") {
     if (v < 0.8) return 5;
     if (v < 1.5) return 4;
-    if (v < 2.5) return 2;
+    if (v < 2.5) return 3;
+    if (v < 4.0) return 2;
     return 1;
   }
   if (layer === "solar") {
     if (v >= 800) return 5;
     if (v >= 600) return 4;
-    if (v >= 400) return 2;
+    if (v >= 400) return 3;
+    if (v >= 150) return 2;
     return 1;
   }
   if (layer === "risk") {
@@ -813,17 +821,13 @@ export function KolkataMap({
   const hasSearch = !!normalizedSearch;
 
   const getZoneHtsi = useCallback(
-    (c: MapZone): number => {
+    (c: MapZone): number | null => {
       const raw =
         valuesByZone?.get(c.zoneId) ??
         valuesByZone?.get(c.zoneId.toLowerCase()) ??
         null;
       if (raw !== null && Number.isFinite(raw)) return raw;
-      const vuln = typeof c.vulnerability === "number" ? c.vulnerability : 15;
-      return Math.min(
-        85,
-        Math.max(30, 42 + (vuln - 15) * 1.4 + ((c.ward ?? 1) % 7) * 3),
-      );
+      return null;
     },
     [valuesByZone],
   );
@@ -831,13 +835,28 @@ export function KolkataMap({
   const valueOf = useCallback(
     (c: MapZone): number | null => {
       if (layer === "vulnerability") return c.vulnerability;
-      if (layer === "htsi") return getZoneHtsi(c);
+      if (layer === "htsi") {
+        const liveHtsi = getZoneHtsi(c);
+        if (liveHtsi !== null) return liveHtsi;
+        const vuln = typeof c.vulnerability === "number" ? c.vulnerability : 15;
+        return Math.min(
+          85,
+          Math.max(30, 42 + (vuln - 15) * 1.4 + ((c.ward ?? 1) % 7) * 3),
+        );
+      }
       if (layer === "risk") {
-        const htsiVal = getZoneHtsi(c);
+        const liveHtsi = getZoneHtsi(c);
         const vulnVal = typeof c.vulnerability === "number" ? c.vulnerability : 15;
-        const htsiDec = htsiVal > 1 ? htsiVal / 100 : htsiVal;
         const vulnDec = vulnVal > 1 ? vulnVal / 100 : vulnVal;
-        return (htsiDec + vulnDec) / 2;
+        if (liveHtsi !== null) {
+          const htsiDec = liveHtsi > 1 ? liveHtsi / 100 : liveHtsi;
+          return (htsiDec + vulnDec) / 2;
+        }
+        const pseudoHtsi = Math.min(
+          85,
+          Math.max(30, 42 + (vulnVal - 15) * 1.4 + ((c.ward ?? 1) % 7) * 3),
+        );
+        return (pseudoHtsi / 100 + vulnDec) / 2;
       }
       return (
         valuesByZone?.get(c.zoneId) ??
@@ -1342,20 +1361,43 @@ export function KolkataMap({
           </button>
         </div>
 
-        {gps && (
-          <button
-            onClick={() => {
+        {/* Current Location Button (Locate Me) */}
+        <button
+          onClick={() => {
+            if (gps && Number.isFinite(gps.lon) && Number.isFinite(gps.lat)) {
               const [gx, gy] = project(gps.lon, gps.lat, bounds);
-              setPan({ x: W / 2 - gx * 2.5, y: H / 2 - gy * 2.5 });
-              setZoom(2.5);
-            }}
-            className="flex h-9 w-9 items-center justify-center rounded-full border border-border/80 bg-card/95 shadow-2xl backdrop-blur-xl transition-all duration-150 active:scale-95 hover:bg-muted"
-            aria-label="Locate me"
-            title="Center on my location"
-          >
-            <LocateFixed className="h-4 w-4 text-blue-600" />
-          </button>
-        )}
+              setZoom(4.0);
+              setPan({ x: W / 2 - gx, y: H / 2 - gy });
+              const match = cells.find((c) => {
+                const cent = centroid(c);
+                const cx = cent ? cent[0] : c.long;
+                const cy = cent ? cent[1] : c.lat;
+                return Math.abs(cx - gps.lon) < 0.02 && Math.abs(cy - gps.lat) < 0.02;
+              });
+              if (match) onSelect(match.zoneId);
+            } else if (typeof window !== "undefined" && "geolocation" in navigator) {
+              navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                  const { latitude, longitude } = pos.coords;
+                  if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+                    const [gx, gy] = project(longitude, latitude, bounds);
+                    setZoom(4.0);
+                    setPan({ x: W / 2 - gx, y: H / 2 - gy });
+                  }
+                },
+                (err) => {
+                  console.warn("Geolocation request failed:", err);
+                },
+                { timeout: 10000, maximumAge: 60000 },
+              );
+            }
+          }}
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border/80 bg-card/95 shadow-2xl backdrop-blur-xl transition-all duration-150 active:scale-95 hover:bg-muted"
+          aria-label="Center on my location"
+          title="Center on my location"
+        >
+          <LocateFixed className={`h-4 w-4 ${gps ? "text-blue-600 dark:text-blue-400" : "text-muted-foreground"}`} />
+        </button>
       </div>
     </div>
   );

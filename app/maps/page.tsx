@@ -29,6 +29,8 @@ import {
   ChevronRight,
   Maximize2,
   Minimize2,
+  Play,
+  Pause,
 } from "lucide-react";
 import { useNav } from "@/lib/navContext";
 import { RISK_SCALE_FILLS, RISK_CATEGORY_STEP, type RiskCategoryKey } from "@/lib/enums/risk.enum";
@@ -647,16 +649,11 @@ function ZoneDetailBody({
               <HeartPulse className="h-4 w-4" />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <p className="text-xs font-black uppercase tracking-wider text-foreground truncate">
-                  Health Advisories
-                </p>
-                <span className={`rounded-md px-2 py-0.5 text-[9px] font-black uppercase tracking-wider ${categoryInfo.badgeBgClass} ${categoryInfo.badgeTextClass} border`}>
-                  {categoryInfo.level} RISK
-                </span>
-              </div>
+              <p className="text-xs font-black uppercase tracking-wider text-foreground truncate">
+                Health Advisories
+              </p>
               <p className="text-[10px] text-muted-foreground font-semibold truncate">
-                {showAdvisories ? "Tap to hide safety actions" : `${categoryInfo.items.length} Active Guidelines for ${categoryInfo.title}`}
+                {showAdvisories ? "Tap to hide safety actions" : `${categoryInfo.items.length} Active Guidelines`}
               </p>
             </div>
           </div>
@@ -671,13 +668,6 @@ function ZoneDetailBody({
 
         {showAdvisories && (
           <div className="mt-3 pt-3 border-t border-border/40 space-y-2 animate-in fade-in zoom-in-95 duration-200">
-            {/* Category Threshold Ranges Bar */}
-            <div className={`rounded-xl border ${categoryInfo.cardBorderClass} p-2 flex items-center justify-between text-[10px] font-bold flex-wrap gap-1`}>
-              <span className={categoryInfo.accentTextClass}>Risk: {categoryInfo.riskRangeLabel}</span>
-              <span className="text-muted-foreground">HTSI: {categoryInfo.htsiRangeLabel}</span>
-              <span className="text-muted-foreground">WBGT: {categoryInfo.wbgtRangeLabel}</span>
-            </div>
-
             {/* Dynamic Category Action Items */}
             {categoryInfo.items.map((item) => (
               <div key={item.title} className={`rounded-xl border ${categoryInfo.cardBorderClass} p-2.5 transition-all`}>
@@ -953,13 +943,28 @@ export default function MapsPage() {
     () => (datesResp as any)?.analysisDates ?? [],
     [datesResp],
   );
-  // Effective date: explicit pick when it carries data for the layer,
-  // else the latest date that does (analysis lags forecast — e.g. Oct 5
-  // has forecast but no analysis rows, so index layers fall back).
+  // Effective date: explicit pick when chosen, otherwise default to TODAY
+  // if available in pool, or the closest date to today (e.g. when forecast extends 5 days out).
   const activeDate = useMemo(() => {
     const pool = ANALYSIS_LAYERS.has(layer) ? analysisDates : dates;
     if (date !== null && pool.includes(date)) return date;
-    return pool[pool.length - 1] ?? dates[dates.length - 1] ?? null;
+    if (pool.length === 0) return dates[dates.length - 1] ?? null;
+
+    const now = new Date();
+    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    if (pool.includes(todayStr)) return todayStr;
+
+    const todayTime = new Date(todayStr).getTime();
+    let closest = pool[0];
+    let minDiff = Math.abs(new Date(closest).getTime() - todayTime);
+    for (let i = 1; i < pool.length; i++) {
+      const diff = Math.abs(new Date(pool[i]).getTime() - todayTime);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closest = pool[i];
+      }
+    }
+    return closest ?? pool[pool.length - 1] ?? null;
   }, [date, dates, analysisDates, layer]);
 
   // Zone alert subscriptions.

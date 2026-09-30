@@ -34,19 +34,6 @@ export async function loadZonesStatic(): Promise<StaticZonesFile | null> {
     }
   }
 
-  // Dynamic import fallback (bundles JSON into JS chunk for serverless runtimes)
-  try {
-    // @ts-ignore
-    const mod = await import("@/public/data/zones.json");
-    const file = (mod.default ?? mod) as StaticZonesFile;
-    if (Array.isArray(file?.zones)) {
-      zonesMem = file;
-      return zonesMem;
-    }
-  } catch {
-    // Ignore dynamic import failure
-  }
-
   return null;
 }
 
