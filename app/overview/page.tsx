@@ -18,6 +18,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LeftNav } from "@/components/layout/LeftNav";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -75,6 +76,12 @@ export default function OverviewPage() {
 
   // District Selection State (null = All Districts)
   const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null);
+  const [visibleWardCount, setVisibleWardCount] = useState<number>(12);
+
+  const handleDistrictSelect = (code: string | null) => {
+    setSelectedDistrict(code);
+    setVisibleWardCount(12);
+  };
 
   const { data: zonesFile } = useSWR<StaticZonesFile>(
     ZONES_JSON_URL,
@@ -131,6 +138,14 @@ export default function OverviewPage() {
     if (!selectedDistrict) return enrichedZones;
     return enrichedZones.filter((z) => z.districtCode === selectedDistrict);
   }, [enrichedZones, selectedDistrict]);
+
+  const sortedZones = useMemo(() => {
+    return [...filteredZones].sort((a, b) => b.riskScore - a.riskScore);
+  }, [filteredZones]);
+
+  const displayedWards = useMemo(() => {
+    return sortedZones.slice(0, visibleWardCount);
+  }, [sortedZones, visibleWardCount]);
 
   // Calculate Mean Indices for the selected District
   const districtMetrics = useMemo(() => {
@@ -217,6 +232,33 @@ export default function OverviewPage() {
     });
   }, [districtMetrics.meanHtsiDecimal]);
 
+  // Cross-District Heat Risk & Vulnerability Matrix Data
+  const districtComparisonData = useMemo(() => {
+    if (!enrichedZones.length) return [];
+    const map = new Map<string, { code: string; name: string; zones: typeof enrichedZones }>();
+    enrichedZones.forEach((z) => {
+      const code = z.districtCode;
+      if (!map.has(code)) {
+        const d = districts.find((item: any) => item.code === code);
+        map.set(code, { code, name: d ? d.name : code, zones: [] });
+      }
+      map.get(code)!.zones.push(z);
+    });
+
+    return Array.from(map.values()).map(({ name, zones: dZones }) => {
+      const avgRisk = dZones.reduce((s, z) => s + z.riskScore, 0) / (dZones.length || 1);
+      const avgHtsi = dZones.reduce((s, z) => s + z.htsiDecimal, 0) / (dZones.length || 1);
+      const avgVuln = dZones.reduce((s, z) => s + z.vulnDecimal, 0) / (dZones.length || 1);
+      return {
+        district: name.replace(" Municipal Corporation", "").replace(" District", "").slice(0, 14),
+        "Mean Risk": Number(avgRisk.toFixed(2)),
+        "Mean HTSI": Number(avgHtsi.toFixed(2)),
+        "Mean Vulnerability": Number(avgVuln.toFixed(2)),
+        count: dZones.length,
+      };
+    });
+  }, [enrichedZones, districts]);
+
   // Risk Distribution Data for Pie/Bar summary
   const riskDistributionData = useMemo(() => {
     return [
@@ -277,7 +319,7 @@ export default function OverviewPage() {
                   {/* District Selection Pills */}
                   <div className="flex flex-wrap gap-2">
                     <button
-                      onClick={() => setSelectedDistrict(null)}
+                      onClick={() => handleDistrictSelect(null)}
                       className={`rounded-full px-4 py-2 text-xs font-bold transition-all shadow-xs ${
                         selectedDistrict === null
                           ? "bg-red-600 text-white shadow-md"
@@ -291,7 +333,7 @@ export default function OverviewPage() {
                       return (
                         <button
                           key={d.code}
-                          onClick={() => setSelectedDistrict(d.code)}
+                          onClick={() => handleDistrictSelect(d.code)}
                           className={`rounded-full px-4 py-2 text-xs font-bold transition-all shadow-xs ${
                             isSelected
                               ? "bg-red-600 text-white shadow-md"
@@ -481,6 +523,184 @@ export default function OverviewPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* GRAPH 3: Cross-District Heat Risk & Vulnerability Matrix */}
+              <Card className="border bg-card shadow-md">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-extrabold flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-violet-500" /> Inter-District Heat Risk Matrix
+                    </span>
+                    <span className="text-xs font-normal text-muted-foreground">All Districts</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Comparative mean risk score, HTSI, and vulnerability across Kolkata & neighboring districts
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-2">
+                  <div className="h-[280px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={districtComparisonData} margin={{ top: 10, right: 10, left: -15, bottom: 25 }}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                        <XAxis dataKey="district" tick={AXIS_TICK} interval={0} angle={-15} textAnchor="end" height={35} />
+                        <YAxis tick={AXIS_TICK} domain={[0, 1]} tickCount={6} />
+                        <Tooltip animationDuration={0} content={<ChartTooltip />} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Bar dataKey="Mean Risk" fill="#ef4444" radius={[4, 4, 0, 0]} name="Mean Risk Score" />
+                        <Bar dataKey="Mean HTSI" fill="#f97316" radius={[4, 4, 0, 0]} name="Mean HTSI" />
+                        <Bar dataKey="Mean Vulnerability" fill="#8b5cf6" radius={[4, 4, 0, 0]} name="Mean Vulnerability" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* GRAPH 4: Diurnal Microclimate Weather Drivers */}
+              <Card className="border bg-card shadow-md">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-extrabold flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Thermometer className="h-4 w-4 text-sky-500" /> Diurnal Microclimate Drivers
+                    </span>
+                    <span className="text-xs font-normal text-muted-foreground">Temp & Humidity</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Ambient Temperature (°C), WBGT index (°C), and Relative Humidity (%) correlation
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-2">
+                  <div className="h-[280px] w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={diurnalData} margin={{ top: 10, right: 10, left: -15, bottom: 10 }}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                        <XAxis dataKey="hour" tick={AXIS_TICK} interval={3} />
+                        <YAxis yAxisId="left" tick={AXIS_TICK} domain={[20, 45]} tickCount={6} />
+                        <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} domain={[40, 100]} width={30} />
+                        <Tooltip animationDuration={0} content={<ChartTooltip />} />
+                        <Legend wrapperStyle={{ fontSize: 11 }} />
+                        <Line yAxisId="left" type="monotone" dataKey="Temp" stroke="#f97316" strokeWidth={2.5} dot={false} name="Temp (°C)" />
+                        <Line yAxisId="left" type="monotone" dataKey="WBGT" stroke="#ef4444" strokeWidth={2} dot={false} name="WBGT (°C)" />
+                        <Line yAxisId="right" type="monotone" dataKey="Humidity" stroke="#0ea5e9" strokeWidth={2} strokeDasharray="5 3" dot={false} name="Humidity (%)" />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* HOTSPOT LEADERBOARD & RISK PROPORTION ANALYTICS */}
+            <div className="grid gap-6 lg:grid-cols-3">
+              {/* TOP HOTSPOTS CARDS */}
+              <Card className="lg:col-span-2 border bg-card shadow-md">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-extrabold flex items-center justify-between">
+                    <span className="flex items-center gap-2">
+                      <Flame className="h-4 w-4 text-red-500 animate-pulse" /> Critical Ward Hotspots ({selectedDistrictName})
+                    </span>
+                    <span className="text-xs font-semibold text-muted-foreground">Top 5 Highest Risk</span>
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Priority wards requiring immediate heat action dispatch and vulnerable welfare monitoring
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-2">
+                  <div className="grid gap-2.5 sm:grid-cols-5">
+                    {sortedZones.slice(0, 5).map((z, idx) => (
+                      <div
+                        key={z.ulid}
+                        onClick={() => openZone(z.ulid)}
+                        className="group relative cursor-pointer rounded-2xl border border-red-500/20 bg-gradient-to-b from-red-500/10 via-card to-card p-3 shadow-xs transition-all hover:-translate-y-0.5 hover:border-red-500/50 hover:shadow-md"
+                      >
+                        <div className="flex items-center justify-between text-[10px] font-black uppercase text-red-600 dark:text-red-400">
+                          <span>Rank #{idx + 1}</span>
+                          <span className="rounded-full bg-red-600/15 px-1.5 py-0.5">
+                            {z.riskScore >= 0.70 ? "EXTREME" : "HIGH"}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs font-extrabold text-foreground truncate group-hover:text-primary transition-colors">
+                          {z.wardLabel}
+                        </p>
+                        <p className="text-[10px] font-semibold text-muted-foreground truncate">
+                          {z.district}
+                        </p>
+                        <div className="mt-3 flex items-center justify-between border-t border-border/40 pt-2 text-[10px]">
+                          <span className="text-muted-foreground">Risk Score</span>
+                          <span className="font-black text-red-600 dark:text-red-400 tabular-nums text-xs">
+                            {z.riskScore.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* RISK SEVERITY PROPORTION BREAKDOWN */}
+              <Card className="border bg-card shadow-md">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-extrabold flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4 text-amber-500" /> Ward Risk Distribution
+                  </CardTitle>
+                  <CardDescription className="text-xs text-muted-foreground">
+                    Proportion of wards categorized by calculated risk tier
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="pt-2 space-y-3.5">
+                  {/* Extreme Risk */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-bold mb-1">
+                      <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                        <span className="h-2 w-2 rounded-full bg-red-600"></span> Extreme Risk (≥0.70)
+                      </span>
+                      <span className="tabular-nums">
+                        {districtMetrics.criticalCount} wards ({((districtMetrics.criticalCount / (filteredZones.length || 1)) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full bg-red-600 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.max(4, (districtMetrics.criticalCount / (filteredZones.length || 1)) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* High Risk */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-bold mb-1">
+                      <span className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400">
+                        <span className="h-2 w-2 rounded-full bg-orange-500"></span> High Risk (0.50–0.69)
+                      </span>
+                      <span className="tabular-nums">
+                        {districtMetrics.highCount} wards ({((districtMetrics.highCount / (filteredZones.length || 1)) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full bg-orange-500 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.max(4, (districtMetrics.highCount / (filteredZones.length || 1)) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+
+                  {/* Moderate / Low Risk */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-bold mb-1">
+                      <span className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
+                        <span className="h-2 w-2 rounded-full bg-amber-500"></span> Moderate / Low Risk (&lt;0.50)
+                      </span>
+                      <span className="tabular-nums">
+                        {districtMetrics.moderateCount} wards ({((districtMetrics.moderateCount / (filteredZones.length || 1)) * 100).toFixed(0)}%)
+                      </span>
+                    </div>
+                    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full bg-amber-500 rounded-full transition-all duration-500"
+                        style={{ width: `${Math.max(4, (districtMetrics.moderateCount / (filteredZones.length || 1)) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
             </div>
 
             {/* WARD DETAILS TABLE FOR SELECTED DISTRICT */}
@@ -491,7 +711,7 @@ export default function OverviewPage() {
                     <MapPin className="h-4.5 w-4.5 text-red-500" /> Ward Heat Risk Inventory ({selectedDistrictName})
                   </span>
                   <span className="text-xs font-semibold text-muted-foreground">
-                    {filteredZones.length} Wards Listed
+                    {displayedWards.length} of {sortedZones.length} Wards Shown
                   </span>
                 </CardTitle>
                 <CardDescription className="text-xs text-muted-foreground">
@@ -513,48 +733,65 @@ export default function OverviewPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/60 font-medium">
-                      {filteredZones
-                        .sort((a, b) => b.riskScore - a.riskScore)
-                        .map((z, idx) => {
-                          const step = vulnStep(z.vulnerability);
-                          return (
-                            <tr
-                              key={z.ulid}
-                              className="transition-colors hover:bg-muted/30 cursor-pointer"
-                              onClick={() => openZone(z.ulid)}
-                            >
-                              <td className="p-3 font-extrabold text-foreground">
-                                <span className="mr-2 text-muted-foreground">#{idx + 1}</span>
-                                {z.wardLabel}
-                              </td>
-                              <td className="p-3 text-muted-foreground">{z.district}</td>
-                              <td className="p-3 tabular-nums font-semibold">{z.heatpoints.length}</td>
-                              <td className="p-3 tabular-nums font-bold text-orange-600 dark:text-orange-400">
-                                {z.htsiDecimal.toFixed(2)}
-                              </td>
-                              <td className="p-3 tabular-nums font-bold text-violet-600 dark:text-violet-400">
-                                {z.vulnDecimal.toFixed(2)}
-                              </td>
-                              <td className="p-3 tabular-nums font-black text-foreground">
-                                {z.riskScore.toFixed(2)}
-                              </td>
-                              <td className="p-3 text-right">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    openZone(z.ulid);
-                                  }}
-                                  className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
-                                >
-                                  View Map <ArrowRight className="h-3 w-3" />
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                      {displayedWards.map((z, idx) => {
+                        return (
+                          <tr
+                            key={z.ulid}
+                            className="transition-colors hover:bg-muted/30 cursor-pointer"
+                            onClick={() => openZone(z.ulid)}
+                          >
+                            <td className="p-3 font-extrabold text-foreground">
+                              <span className="mr-2 text-muted-foreground">#{idx + 1}</span>
+                              {z.wardLabel}
+                            </td>
+                            <td className="p-3 text-muted-foreground">{z.district}</td>
+                            <td className="p-3 tabular-nums font-semibold">{z.heatpoints.length}</td>
+                            <td className="p-3 tabular-nums font-bold text-orange-600 dark:text-orange-400">
+                              {z.htsiDecimal.toFixed(2)}
+                            </td>
+                            <td className="p-3 tabular-nums font-bold text-violet-600 dark:text-violet-400">
+                              {z.vulnDecimal.toFixed(2)}
+                            </td>
+                            <td className="p-3 tabular-nums font-black text-foreground">
+                              {z.riskScore.toFixed(2)}
+                            </td>
+                            <td className="p-3 text-right">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openZone(z.ulid);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-3 py-1 text-[11px] font-bold text-primary hover:bg-primary hover:text-primary-foreground transition-colors"
+                              >
+                                View Map <ArrowRight className="h-3 w-3" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
+
+                {/* SHOW MORE WARDS BATCH CONTROL */}
+                {visibleWardCount < sortedZones.length && (
+                  <div className="pt-4 text-center pb-2 flex flex-wrap items-center justify-center gap-3 border-t mt-3">
+                    <Button
+                      onClick={() => setVisibleWardCount((prev) => prev + 25)}
+                      variant="outline"
+                      className="h-9 rounded-xl border-primary/40 px-5 text-xs font-extrabold text-primary hover:bg-primary hover:text-primary-foreground transition-all shadow-xs"
+                    >
+                      Show More Wards ({displayedWards.length} of {sortedZones.length} shown)
+                    </Button>
+                    <Button
+                      onClick={() => setVisibleWardCount(sortedZones.length)}
+                      variant="ghost"
+                      className="h-9 rounded-xl px-4 text-xs font-bold text-muted-foreground hover:text-foreground"
+                    >
+                      Show All ({sortedZones.length})
+                    </Button>
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

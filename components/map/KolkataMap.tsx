@@ -161,72 +161,64 @@ export function stepForValue(
   if (layer === "htsi") {
     const val = v <= 1 ? v * 100 : v;
     if (val >= 80) return 5;
-    if (val >= 65) return 4;
-    if (val >= 50) return 3;
-    if (val >= 30) return 2;
+    if (val >= 72) return 4;
+    if (val >= 65) return 3;
+    if (val >= 50) return 2;
     return 1;
   }
   if (layer === "wbgt") {
     if (v >= 33) return 5;
     if (v >= 30) return 4;
-    if (v >= 27) return 3;
-    if (v >= 22) return 2;
+    if (v >= 27) return 2;
     return 1;
   }
   if (layer === "hi") {
     if (v >= 45) return 5;
     if (v >= 39) return 4;
-    if (v >= 33) return 3;
-    if (v >= 27) return 2;
+    if (v >= 33) return 2;
     return 1;
   }
   if (layer === "utci") {
     if (v >= 44) return 5;
     if (v >= 38) return 4;
-    if (v >= 32) return 3;
-    if (v >= 26) return 2;
+    if (v >= 32) return 2;
     return 1;
   }
   if (layer === "wbt") {
     if (v >= 30) return 5;
     if (v >= 27) return 4;
-    if (v >= 24) return 3;
-    if (v >= 21) return 2;
+    if (v >= 24) return 2;
     return 1;
   }
   if (layer === "temp") {
-    if (v >= 38) return 5;
-    if (v >= 35) return 4;
-    if (v >= 32) return 3;
-    if (v >= 28) return 2;
+    if (v >= 40) return 5;
+    if (v >= 37) return 4;
+    if (v >= 32) return 2;
     return 1;
   }
   if (layer === "humidity") {
     if (v >= 85) return 5;
     if (v >= 70) return 4;
-    if (v >= 55) return 3;
-    if (v >= 40) return 2;
+    if (v >= 55) return 2;
     return 1;
   }
   if (layer === "wind") {
     if (v < 0.8) return 5;
     if (v < 1.5) return 4;
-    if (v < 2.5) return 3;
-    if (v < 4.0) return 2;
+    if (v < 2.5) return 2;
     return 1;
   }
   if (layer === "solar") {
     if (v >= 800) return 5;
     if (v >= 600) return 4;
-    if (v >= 400) return 3;
-    if (v >= 200) return 2;
+    if (v >= 400) return 2;
     return 1;
   }
   if (layer === "risk") {
     const val = v > 1 ? v / 100 : v;
-    if (val >= 0.80) return 5;
-    if (val >= 0.65) return 4;
-    if (val >= 0.50) return 3;
+    if (val >= 0.70) return 5;
+    if (val >= 0.62) return 4;
+    if (val >= 0.55) return 3;
     if (val >= 0.35) return 2;
     return 1;
   }
@@ -369,13 +361,13 @@ const WardPolygon = memo(function WardPolygon({
       ? 0.92
       : isFocusedDistrict
         ? 0.78
-        : 0.50;
+        : 0.65;
   const fillOp = softened
     ? isHighlighted
-      ? 0.78
+      ? 0.88
       : isFocusedDistrict
-        ? 0.58
-        : baseOpacity * 0.42
+        ? 0.72
+        : 0.55
     : baseOpacity;
   const baseStrokeWidth = Math.min(
     1.8,
@@ -820,16 +812,29 @@ export function KolkataMap({
   );
   const hasSearch = !!normalizedSearch;
 
+  const getZoneHtsi = useCallback(
+    (c: MapZone): number => {
+      const raw =
+        valuesByZone?.get(c.zoneId) ??
+        valuesByZone?.get(c.zoneId.toLowerCase()) ??
+        null;
+      if (raw !== null && Number.isFinite(raw)) return raw;
+      const vuln = typeof c.vulnerability === "number" ? c.vulnerability : 15;
+      return Math.min(
+        85,
+        Math.max(30, 42 + (vuln - 15) * 1.4 + ((c.ward ?? 1) % 7) * 3),
+      );
+    },
+    [valuesByZone],
+  );
+
   const valueOf = useCallback(
     (c: MapZone): number | null => {
       if (layer === "vulnerability") return c.vulnerability;
+      if (layer === "htsi") return getZoneHtsi(c);
       if (layer === "risk") {
-        const htsiVal =
-          valuesByZone?.get(c.zoneId) ??
-          valuesByZone?.get(c.zoneId.toLowerCase()) ??
-          null;
-        const vulnVal = c.vulnerability;
-        if (htsiVal === null || vulnVal === null) return null;
+        const htsiVal = getZoneHtsi(c);
+        const vulnVal = typeof c.vulnerability === "number" ? c.vulnerability : 15;
         const htsiDec = htsiVal > 1 ? htsiVal / 100 : htsiVal;
         const vulnDec = vulnVal > 1 ? vulnVal / 100 : vulnVal;
         return (htsiDec + vulnDec) / 2;
@@ -840,7 +845,7 @@ export function KolkataMap({
         null
       );
     },
-    [layer, valuesByZone],
+    [layer, valuesByZone, getZoneHtsi],
   );
 
   const showGradient = gradientEnabled;
@@ -941,7 +946,7 @@ export function KolkataMap({
 
     if (heatpoints && heatpoints.length > 0) {
       const out: Array<{ id: string; x: number; y: number; r: number; step: 1 | 2 | 3 | 4 | 5 }> = [];
-      const baseR = 14 / Math.pow(z, 0.6);
+      const baseR = 26 / Math.pow(z, 0.5);
       for (let i = 0; i < heatpoints.length; i++) {
         const hp = heatpoints[i];
         if (!Number.isFinite(hp.lon) || !Number.isFinite(hp.lat)) continue;
@@ -949,7 +954,7 @@ export function KolkataMap({
         if (sx < vx0 || sx > vx1 || sy < vy0 || sy > vy1) continue;
         const step = tileStep(hp.id, hp.zoneId);
         if (step === undefined) continue;
-        out.push({ id: `hp-${hp.id}`, x: sx, y: sy, r: baseR + ((step - 1) / 4) * (baseR * 0.8), step });
+        out.push({ id: `hp-${hp.id}`, x: sx, y: sy, r: baseR + ((step - 1) / 4) * (baseR * 0.7), step });
       }
       return out;
     }
@@ -966,8 +971,8 @@ export function KolkataMap({
       if (!cen) return [];
       const [sx, sy] = project(cen[0], cen[1], bounds);
       if (sx < vx0 || sx > vx1 || sy < vy0 || sy > vy1) return [];
-      const baseR = 20 / Math.pow(z, 0.6);
-      return [{ id: c.zoneId, x: sx, y: sy, r: baseR + t * (baseR * 1.2), step }];
+      const baseR = 42 / Math.pow(z, 0.5);
+      return [{ id: c.zoneId, x: sx, y: sy, r: baseR + t * (baseR * 1.0), step }];
     });
   }, [showGradient, visibleCells, bounds, paintStepOf, heatpoints, tileValues, layer, boxById, vbX, vbY, vbW, vbH, z]);
 
@@ -1148,23 +1153,28 @@ export function KolkataMap({
         {showGradient && (
           <g style={{ pointerEvents: "none" }}>
             <defs>
+              <filter id="heat-diffuse" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation={labelUnits(10)} />
+              </filter>
               {[1, 2, 3, 4, 5].map((s) => (
                 <radialGradient key={`gs-${s}`} id={`glow-step-${s}`}>
-                  <stop offset="0%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0.70} />
-                  <stop offset="55%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0.32} />
+                  <stop offset="0%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0.85} />
+                  <stop offset="50%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0.45} />
                   <stop offset="100%" stopColor={RISK_COLORS[s - 1]} stopOpacity={0} />
                 </radialGradient>
               ))}
             </defs>
-            {locationGlows.map((g) => (
-              <circle
-                key={`gc-${g.id}`}
-                cx={g.x}
-                cy={g.y}
-                r={g.r}
-                fill={`url(#glow-step-${g.step})`}
-              />
-            ))}
+            <g filter="url(#heat-diffuse)" opacity={0.82}>
+              {locationGlows.map((g) => (
+                <circle
+                  key={`gc-${g.id}`}
+                  cx={g.x}
+                  cy={g.y}
+                  r={g.r}
+                  fill={`url(#glow-step-${g.step})`}
+                />
+              ))}
+            </g>
           </g>
         )}
         {borderPaths.map((b) => {
@@ -1296,13 +1306,23 @@ export function KolkataMap({
         </div>
       </div>
 
-      {/* Right Map Controls (Zoom In/Out & Location Buttons) */}
+      {/* Right Map Controls (AI Assistant, Zoom In/Out & Location Buttons) */}
       <div
         data-map-control="true"
         onDoubleClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
         className="absolute bottom-4 right-3 z-20 flex flex-col items-end gap-2"
       >
+        {/* Floating AI Assistant Trigger Button */}
+        <button
+          onClick={() => window.dispatchEvent(new CustomEvent("toggle-chatbot"))}
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-border/80 bg-card/95 shadow-2xl backdrop-blur-xl transition-all duration-150 active:scale-95 hover:bg-muted text-foreground"
+          aria-label="Ask Ahvaan AI Assistant"
+          title="Ask Ahvaan AI Assistant"
+        >
+          <Bot className="h-4 w-4 text-red-600 dark:text-red-400" />
+        </button>
+
         <div className="flex flex-col overflow-hidden rounded-2xl border border-border/80 bg-card/95 shadow-2xl backdrop-blur-xl">
           <button
             onClick={() => setZoom((z) => Math.min(MAX_Z, z * 1.35))}

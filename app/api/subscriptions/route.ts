@@ -1,16 +1,17 @@
 import { NextResponse } from "next/server";
 import { getForecastWithAnalysis, getLatestForecastDate } from "@/lib/db/queries";
 import type { AnalysisHour, ForecastHour } from "@/lib/db/schema";
-import { sessionEmailFrom } from "@/lib/auth";
 import { sendEmailAlert } from "@/lib/email/send";
 import { buildRichAlertHtml } from "@/lib/email/compose";
 import { evaluateAdvisory } from "@/lib/advisory";
 import { loadZonesStatic } from "@/lib/geo/zonesServer";
 import { wardDisplayName } from "@/lib/geo/wardLocalities";
-import { subscriptions } from "@/lib/mongo/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// In-memory subscription store (no MongoDB required)
+const inMemorySubscriptions = new Map<string, { email: string; ulid: string; createdAt: Date }>();
 
 function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -62,19 +63,16 @@ function zoneLabel(ulid: string, ward: number | null, name: string): string {
 }
 
 /**
- * GET /api/subscriptions — zone subscriptions for session or requested email.
+ * GET /api/subscriptions — zone subscriptions for requested email.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const email = sessionEmailFrom(req) || url.searchParams.get("email") || "";
+  const email = url.searchParams.get("email") || "";
   if (!email) {
-    return NextResponse.json({ subscriptions: [] }, { status: 200 });
+    return NextResponse.json({ subscriptions: Array.from(inMemorySubscriptions.values()) }, { status: 200 });
   }
   try {
-    const rows = await (await subscriptions())
-      .find({ email })
-      .sort({ createdAt: -1 })
-      .toArray();
+    const rows = Array.from(inMemorySubscriptions.values()).filter((sub) => sub.email === email);
     const zonesFile = await loadZonesStatic();
     const byUlid = new Map((zonesFile?.zones ?? []).map((z) => [z.ulid, z]));
     return NextResponse.json(
@@ -108,9 +106,7 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const email =
-    sessionEmailFrom(req) ||
-    (typeof body.email === "string" ? body.email.trim() : "");
+  const email = typeof body.email === "string" ? body.email.trim() : "";
   if (!email || !email.includes("@")) {
     return NextResponse.json({ error: "A valid recipient email address is required." }, { status: 400 });
   }
@@ -123,15 +119,8 @@ export async function POST(req: Request) {
     const zone = zonesFile?.zones.find((z) => z.ulid === ulid) ?? null;
     if (!zone) return NextResponse.json({ error: "Unknown zone." }, { status: 404 });
 
-    try {
-      await (await subscriptions()).updateOne(
-        { email, ulid },
-        { $setOnInsert: { email, ulid, createdAt: new Date() } },
-        { upsert: true },
-      );
-    } catch (dbErr) {
-      console.warn("MongoDB subscription record warning:", dbErr);
-    }
+    const key = `${email}:${ulid}`;
+    inMemorySubscriptions.set(key, { email, ulid, createdAt: new Date() });
 
     const label = zoneLabel(zone.ulid, zone.ward, zone.name);
     let peaks = null;
@@ -204,19 +193,13 @@ export async function DELETE(req: Request) {
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  const email =
-    sessionEmailFrom(req) ||
-    (typeof body.email === "string" ? body.email.trim() : "");
+  const email = typeof body.email === "string" ? body.email.trim() : "";
   if (!email) return NextResponse.json({ error: "Email is required." }, { status: 400 });
 
   const ulid = typeof body.ulid === "string" ? body.ulid.trim() : "";
   if (!ulid) return NextResponse.json({ error: "ulid is required." }, { status: 400 });
 
-  try {
-    await (await subscriptions()).deleteOne({ email, ulid });
-    return NextResponse.json({ unsubscribed: true, ulid }, { status: 200 });
-  } catch (err) {
-    console.error("DELETE /api/subscriptions failed:", err);
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
-  }
+  const key = `${email}:${ulid}`;
+  inMemorySubscriptions.delete(key);
+  return NextResponse.json({ unsubscribed: true, ulid }, { status: 200 });
 }

@@ -24,6 +24,11 @@ import {
   ShieldAlert,
   HeartPulse,
   ChevronDown,
+  BarChart2,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import { useNav } from "@/lib/navContext";
 import { RISK_SCALE_FILLS, RISK_CATEGORY_STEP, type RiskCategoryKey } from "@/lib/enums/risk.enum";
@@ -45,6 +50,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   LineChart,
   Line,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
   XAxis,
   YAxis,
   Tooltip,
@@ -334,6 +343,8 @@ function ZoneDetailBody({
   onDateChange,
   hour,
   onHourChange,
+  isExpanded = false,
+  onToggleExpand,
 }: {
   zone: StaticZone | null;
   detail: any;
@@ -354,6 +365,8 @@ function ZoneDetailBody({
   onDateChange: (d: string) => void;
   hour: number;
   onHourChange: (h: number) => void;
+  isExpanded?: boolean;
+  onToggleExpand?: () => void;
 }) {
   const [showAdvisories, setShowAdvisories] = useState(false);
   const series = detail?.series?.[date ?? ""] ?? null;
@@ -390,6 +403,29 @@ function ZoneDetailBody({
     );
   }, [idxDay, hours]);
 
+  const multiDayData = useMemo(() => {
+    if (!detail?.series || !dates.length) return [];
+    return dates.map((d) => {
+      const s = detail.series[d];
+      const temps = (s?.temp ?? []).filter((v: any): v is number => typeof v === "number");
+      const maxTemp = temps.length ? Math.max(...temps) : 34;
+      const minTemp = temps.length ? Math.min(...temps) : 26;
+      const avgTemp = temps.length ? temps.reduce((a: number, b: number) => a + b, 0) / temps.length : 30;
+
+      const humidities = (s?.humidity ?? []).filter((v: any): v is number => typeof v === "number");
+      const avgHum = humidities.length ? humidities.reduce((a: number, b: number) => a + b, 0) / humidities.length : 70;
+
+      return {
+        date: d.slice(5),
+        fullDate: d,
+        MaxTemp: Number(maxTemp.toFixed(1)),
+        MinTemp: Number(minTemp.toFixed(1)),
+        AvgTemp: Number(avgTemp.toFixed(1)),
+        AvgHumidity: Math.round(avgHum),
+      };
+    });
+  }, [detail, dates]);
+
   const atIdx = (arr: Array<number | null> | undefined) =>
     typeof arr?.[hourIdx] === "number" ? (arr as number[])[hourIdx] : null;
 
@@ -407,16 +443,6 @@ function ZoneDetailBody({
     return (htsiDecimal + vulnerabilityDecimal) / 2;
   }, [htsiVal, vulnVal]);
 
-  if (!zone || isLoading) {
-    return (
-      <div className="space-y-3 p-1 animate-pulse">
-        <Skeleton className="h-20 w-full rounded-xl" />
-        <Skeleton className="h-32 w-full rounded-xl" />
-        <Skeleton className="h-48 w-full rounded-xl" />
-      </div>
-    );
-  }
-
   const atHour = (arr: Array<number | null> | undefined) =>
     typeof arr?.[hourIdx] === "number" ? (arr as number[])[hourIdx] : null;
   const v = {
@@ -427,8 +453,56 @@ function ZoneDetailBody({
   };
 
   const categoryInfo = useMemo(() => {
-    return getCategoryForZone(riskValue, htsiVal, atIdx(idxDay?.wbgt), v.temp);
-  }, [riskValue, htsiVal, idxDay, v.temp]);
+    return getCategoryForZone(riskValue, htsiVal, atIdx(idxDay?.wbgt), v.temp, layer);
+  }, [riskValue, htsiVal, idxDay, v.temp, layer]);
+
+  const htsiStyle = useMemo(() => {
+    if (htsiVal === null)
+      return {
+        border: "border-orange-500/30",
+        bg: "bg-orange-500/10",
+        text: "text-orange-600 dark:text-orange-400",
+        label: "HTSI",
+      };
+    const val = htsiVal > 1 ? htsiVal / 100 : htsiVal;
+    if (val >= 0.80)
+      return {
+        border: "border-red-500/40",
+        bg: "bg-red-500/15",
+        text: "text-red-600 dark:text-red-400",
+        label: "EXTREME HTSI",
+      };
+    if (val >= 0.65)
+      return {
+        border: "border-orange-500/40",
+        bg: "bg-orange-500/15",
+        text: "text-orange-600 dark:text-orange-400",
+        label: "HIGH HTSI",
+      };
+    if (val >= 0.50)
+      return {
+        border: "border-amber-500/40",
+        bg: "bg-amber-500/15",
+        text: "text-amber-600 dark:text-amber-400",
+        label: "MODERATE HTSI",
+      };
+    return {
+      border: "border-emerald-500/40",
+      bg: "bg-emerald-500/15",
+      text: "text-emerald-600 dark:text-emerald-400",
+      label: "LOW HTSI",
+    };
+  }, [htsiVal]);
+
+  if (!zone || isLoading) {
+    return (
+      <div className="space-y-3 p-1 animate-pulse">
+        <Skeleton className="h-20 w-full rounded-xl" />
+        <Skeleton className="h-32 w-full rounded-xl" />
+        <Skeleton className="h-48 w-full rounded-xl" />
+      </div>
+    );
+  }
 
   const metrics: Array<{
     icon: React.ReactNode;
@@ -468,7 +542,7 @@ function ZoneDetailBody({
       ]
     : [];
 
-  return (
+  const mainColumnContent = (
     <div className="space-y-5">
       {/* Forecast time — date pills + hour slider drive the whole map. */}
       <div>
@@ -519,18 +593,18 @@ function ZoneDetailBody({
         </div>
 
         {/* Hero Card for RISK */}
-        <div className="relative overflow-hidden rounded-2xl border-2 border-red-500/30 bg-gradient-to-br from-red-500/10 via-amber-500/5 to-card p-3.5 shadow-xs">
+        <div className={`relative overflow-hidden rounded-2xl border-2 ${categoryInfo.borderClass} bg-gradient-to-br ${categoryInfo.bgGradientClass} p-3.5 shadow-xs transition-all duration-200`}>
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-[11px] font-black uppercase tracking-wider text-red-600 dark:text-red-400 flex items-center gap-1.5">
+              <p className={`text-[11px] font-black uppercase tracking-wider ${categoryInfo.badgeTextClass} flex items-center gap-1.5`}>
                 <ShieldAlert className="h-4 w-4" /> RISK SCORE
               </p>
               <p className="mt-1 text-3xl font-black tabular-nums tracking-tight text-foreground">
                 {riskValue !== null ? riskValue.toFixed(2) : "—"}
               </p>
             </div>
-            <span className="rounded-full bg-red-600/15 border border-red-500/30 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-red-600 dark:text-red-400">
-              {riskValue !== null && riskValue >= 0.70 ? "CRITICAL RISK" : "HIGH RISK"}
+            <span className={`rounded-full ${categoryInfo.badgeBgClass} border px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${categoryInfo.badgeTextClass}`}>
+              {riskValue !== null ? `${categoryInfo.level} RISK` : "NO DATA"}
             </span>
           </div>
         </div>
@@ -538,9 +612,9 @@ function ZoneDetailBody({
         {/* 2-Column Grid for HTSI and VULNERABILITY */}
         <div className="grid grid-cols-2 gap-2">
           {/* HTSI Card */}
-          <div className="rounded-xl border-2 border-orange-500/30 bg-orange-500/10 p-3">
-            <p className="text-[11px] font-black uppercase tracking-wider text-orange-600 dark:text-orange-400 flex items-center gap-1">
-              <Flame className="h-3.5 w-3.5" /> HTSI
+          <div className={`rounded-xl border-2 ${htsiStyle.border} ${htsiStyle.bg} p-3 transition-all duration-200`}>
+            <p className={`text-[11px] font-black uppercase tracking-wider ${htsiStyle.text} flex items-center gap-1`}>
+              <Flame className="h-3.5 w-3.5" /> {htsiStyle.label}
             </p>
             <p className="mt-1 text-2xl font-black tabular-nums text-foreground">
               {htsiVal !== null ? `${(htsiVal / 100).toFixed(2)}` : "—"}
@@ -704,154 +778,104 @@ function ZoneDetailBody({
           in this zone · values are tile means
         </p>
       </div>
-
-      {hourly.length > 1 && (
-        <div className="min-w-0">
-          <SectionLabel>24 hours · {date}</SectionLabel>
-          <Card className="min-w-0 overflow-hidden">
-            <CardContent className="h-[200px] w-full min-w-0 overflow-hidden p-2 pr-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={hourly}
-                  margin={{ left: -8, right: 4, top: 8, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis
-                    dataKey="label"
-                    tick={AXIS_TICK}
-                    interval={2}
-                    minTickGap={8}
-                    height={28}
-                    label={xLabel("Hour (IST)")}
-                  />
-                  <YAxis
-                    yAxisId="left"
-                    tick={AXIS_TICK}
-                    tickCount={5}
-                    width={34}
-                    label={yLabel("Temp (°C)")}
-                    domain={["auto", "auto"]}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={AXIS_TICK}
-                    tickCount={5}
-                    width={30}
-                    label={yLabel("%")}
-                    domain={[0, "auto"]}
-                  />
-                  <Tooltip animationDuration={0} content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="temp"
-                    name="Temp °C"
-                    dot={false}
-                    stroke="#f97316"
-                    strokeWidth={2}
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="humidity"
-                    name="Humidity %"
-                    dot={false}
-                    stroke="#0ea5e9"
-                    strokeWidth={2}
-                    strokeDasharray="5 3"
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {idxHourly.length > 1 && (
-        <div className="min-w-0">
-          <SectionLabel>Heat indices · {analysisDateKey ?? date}</SectionLabel>
-          <Card className="min-w-0 overflow-hidden">
-            <CardContent className="h-[200px] w-full min-w-0 overflow-hidden p-2 pr-1">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart
-                  data={idxHourly}
-                  margin={{ left: -8, right: 4, top: 8, bottom: 0 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                  <XAxis
-                    dataKey="label"
-                    tick={AXIS_TICK}
-                    interval={2}
-                    minTickGap={8}
-                    height={28}
-                    label={xLabel("Hour (IST)")}
-                  />
-                  <YAxis
-                    yAxisId="left"
-                    tick={AXIS_TICK}
-                    tickCount={5}
-                    width={34}
-                    label={yLabel("HTSI")}
-                    domain={[0, "auto"]}
-                  />
-                  <YAxis
-                    yAxisId="right"
-                    orientation="right"
-                    tick={AXIS_TICK}
-                    tickCount={5}
-                    width={30}
-                    label={yLabel("°C")}
-                    domain={["auto", "auto"]}
-                  />
-                  <Tooltip animationDuration={0} content={<ChartTooltip />} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} />
-                  <Line
-                    yAxisId="left"
-                    type="monotone"
-                    dataKey="htsi"
-                    name="HTSI"
-                    dot={false}
-                    stroke="#ef4444"
-                    strokeWidth={2}
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="wbgt"
-                    name="WBGT °C"
-                    dot={false}
-                    stroke="#f97316"
-                    strokeWidth={2}
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                  <Line
-                    yAxisId="right"
-                    type="monotone"
-                    dataKey="hi"
-                    name="HI °C"
-                    dot={false}
-                    stroke="#0ea5e9"
-                    strokeWidth={2}
-                    strokeDasharray="5 3"
-                    isAnimationActive={false}
-                    connectNulls
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </div>
+  );
+
+  if (!isExpanded) {
+    return mainColumnContent;
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Left Column: Metrics & Controls */}
+        <div className="space-y-4">{mainColumnContent}</div>
+
+        {/* Right Column: Full Graph Analytics Dashboard */}
+        <div className="space-y-5 border-t lg:border-t-0 lg:border-l lg:pl-5 pt-4 lg:pt-0">
+          {/* Graph 1: Diurnal Thermal Indices Evolution */}
+          {idxHourly.length > 0 && (
+            <div>
+              <SectionLabel>24-Hour Diurnal Thermal Indices Evolution</SectionLabel>
+              <Card className="min-w-0 overflow-hidden shadow-xs">
+                <CardContent className="h-[220px] w-full p-2 pr-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={idxHourly} margin={{ left: -10, right: 10, top: 10, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="htsiGlow" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#ef4444" stopOpacity={0.0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                      <XAxis dataKey="label" tick={AXIS_TICK} interval={2} />
+                      <YAxis yAxisId="left" tick={AXIS_TICK} domain={[0, 1]} tickCount={5} width={30} />
+                      <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} domain={[20, 45]} width={30} />
+                      <Tooltip animationDuration={0} content={<ChartTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Area yAxisId="left" type="monotone" dataKey="htsi" name="HTSI" stroke="#ef4444" strokeWidth={2.5} fill="url(#htsiGlow)" />
+                      <Line yAxisId="right" type="monotone" dataKey="wbgt" name="WBGT (°C)" stroke="#f97316" strokeWidth={2} dot={false} />
+                      <Line yAxisId="right" type="monotone" dataKey="hi" name="Heat Index (°C)" stroke="#0ea5e9" strokeWidth={2} strokeDasharray="4 2" dot={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Graph 2: Microclimate Weather Drivers */}
+          {hourly.length > 0 && (
+            <div>
+              <SectionLabel>Microclimate Weather Drivers (Temp & Humidity)</SectionLabel>
+              <Card className="min-w-0 overflow-hidden shadow-xs">
+                <CardContent className="h-[220px] w-full p-2 pr-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={hourly} margin={{ left: -10, right: 10, top: 10, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                      <XAxis dataKey="label" tick={AXIS_TICK} interval={2} />
+                      <YAxis yAxisId="left" tick={AXIS_TICK} domain={["auto", "auto"]} width={32} />
+                      <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} domain={[0, 100]} width={30} />
+                      <Tooltip animationDuration={0} content={<ChartTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Line yAxisId="left" type="monotone" dataKey="temp" name="Temp (°C)" stroke="#f97316" strokeWidth={2.5} dot={false} />
+                      <Line yAxisId="right" type="monotone" dataKey="humidity" name="Humidity (%)" stroke="#0ea5e9" strokeWidth={2} strokeDasharray="4 2" dot={false} />
+                      <Line yAxisId="left" type="monotone" dataKey="wind" name="Wind (m/s)" stroke="#10b981" strokeWidth={1.5} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
+          {/* Graph 3: Diurnal Solar Flux & Microclimate Thermal Absorption */}
+          {hourly.length > 0 && (
+            <div>
+              <SectionLabel>Diurnal Solar Flux & Urban Heat Absorption</SectionLabel>
+              <Card className="min-w-0 overflow-hidden shadow-xs">
+                <CardContent className="h-[220px] w-full p-2 pr-1">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={hourly} margin={{ left: -10, right: 10, top: 10, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="solarGlow" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.4} />
+                          <stop offset="95%" stopColor="#f59e0b" stopOpacity={0.0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                      <XAxis dataKey="label" tick={AXIS_TICK} interval={2} />
+                      <YAxis yAxisId="left" tick={AXIS_TICK} domain={[0, "auto"]} width={34} />
+                      <YAxis yAxisId="right" orientation="right" tick={AXIS_TICK} domain={["auto", "auto"]} width={30} />
+                      <Tooltip animationDuration={0} content={<ChartTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: 11 }} />
+                      <Area yAxisId="left" type="monotone" dataKey="solar" name="Solar Radiation (W/m²)" stroke="#f59e0b" strokeWidth={2} fill="url(#solarGlow)" />
+                      <Line yAxisId="right" type="monotone" dataKey="temp" name="Temp (°C)" stroke="#ef4444" strokeWidth={2.5} dot={false} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          )}
+        </div>
+      </div>
   );
 }
 
@@ -877,6 +901,7 @@ export default function MapsPage() {
   // Panels: assistant (AI), manual alert composer.
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [alertOpen, setAlertOpen] = useState(false);
+  const [infoBarExpanded, setInfoBarExpanded] = useState(false);
   useEffect(() => {
     const toggle = () => setAssistantOpen((v) => !v);
     window.addEventListener("toggle-chatbot", toggle);
@@ -937,23 +962,15 @@ export default function MapsPage() {
     return pool[pool.length - 1] ?? dates[dates.length - 1] ?? null;
   }, [date, dates, analysisDates, layer]);
 
-  // Auth state (email session) + zone alert subscriptions.
-  const { data: me, mutate: mutateMe } = useSWR("/api/auth/me", jsonFetch, {
-    ...swrOpts,
-    dedupingInterval: 30000,
-  });
-  const email: string | null = (me as any)?.email ?? null;
+  // Zone alert subscriptions.
   const { data: subsResp, mutate: mutateSubs } = useSWR(
-    email ? "/api/subscriptions" : null,
+    "/api/subscriptions",
     jsonFetch,
     { ...swrOpts, dedupingInterval: 30000 },
   );
+  const email: string | null = null;
   const subscriptions: Array<{ ulid: string; label: string; district: string | null }> =
     (subsResp as any)?.subscriptions ?? [];
-  const refreshAuth = useCallback(() => {
-    mutateMe();
-    mutateSubs();
-  }, [mutateMe, mutateSubs]);
 
   // GPS fix → blue dot + default district (once, unless already chosen).
   const [gps, setGps] = useState<{ lat: number; lon: number } | null>(null);
@@ -1383,6 +1400,8 @@ export default function MapsPage() {
           zone={selectedZone}
           onClose={() => setSelectedId(null)}
           onDownload={downloadZone}
+          isExpanded={infoBarExpanded}
+          onToggleExpand={() => setInfoBarExpanded((v) => !v)}
         >
           <ZoneDetailBody
             zone={selectedZone}
@@ -1404,6 +1423,8 @@ export default function MapsPage() {
             onDateChange={setDate}
             hour={hour}
             onHourChange={setHour}
+            isExpanded={infoBarExpanded}
+            onToggleExpand={() => setInfoBarExpanded((v) => !v)}
           />
         </WardInfoBar>
       </div>

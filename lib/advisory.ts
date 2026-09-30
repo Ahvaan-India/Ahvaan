@@ -261,12 +261,43 @@ export function getCategoryForZone(
   risk: number | null,
   htsi: number | null,
   wbgt: number | null,
-  temp: number | null
+  temp: number | null,
+  layer?: string
 ): HeatCategoryInfo {
   const r = risk !== null ? risk : null;
   const h = htsi !== null ? (htsi > 1 ? htsi / 100 : htsi) : null;
   const w = wbgt !== null ? wbgt : null;
   const t = temp !== null ? temp : null;
+
+  if (layer === "risk") {
+    if (r !== null) {
+      if (r >= 0.70) return HEAT_CATEGORIES.EXTREME;
+      if (r >= 0.55) return HEAT_CATEGORIES.HIGH;
+      if (r >= 0.35) return HEAT_CATEGORIES.MODERATE;
+      return HEAT_CATEGORIES.LOW;
+    }
+  } else if (layer === "htsi") {
+    if (h !== null) {
+      if (h >= 0.80) return HEAT_CATEGORIES.EXTREME;
+      if (h >= 0.65) return HEAT_CATEGORIES.HIGH;
+      if (h >= 0.50) return HEAT_CATEGORIES.MODERATE;
+      return HEAT_CATEGORIES.LOW;
+    }
+  } else if (layer === "wbgt") {
+    if (w !== null) {
+      if (w >= 33.0) return HEAT_CATEGORIES.EXTREME;
+      if (w >= 30.0) return HEAT_CATEGORIES.HIGH;
+      if (w >= 27.0) return HEAT_CATEGORIES.MODERATE;
+      return HEAT_CATEGORIES.LOW;
+    }
+  } else if (layer === "temp") {
+    if (t !== null) {
+      if (t >= 40.0) return HEAT_CATEGORIES.EXTREME;
+      if (t >= 37.0) return HEAT_CATEGORIES.HIGH;
+      if (t >= 32.0) return HEAT_CATEGORIES.MODERATE;
+      return HEAT_CATEGORIES.LOW;
+    }
+  }
 
   if (
     (r !== null && r >= 0.70) ||

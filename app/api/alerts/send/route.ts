@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { sessionEmailFrom } from "@/lib/auth";
 import { sendEmailAlert } from "@/lib/email/send";
 import { isValidEmail } from "@/lib/email/compose";
 
@@ -17,8 +16,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const sessionEmail = sessionEmailFrom(req);
-  const to = typeof body.to === "string" && body.to.trim() ? body.to.trim() : (sessionEmail || "");
+  const to = typeof body.to === "string" && body.to.trim() ? body.to.trim() : "";
 
   if (!isValidEmail(to)) {
     return NextResponse.json({ error: "To must be a valid email address." }, { status: 400 });

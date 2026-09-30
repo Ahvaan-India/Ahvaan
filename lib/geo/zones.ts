@@ -100,6 +100,20 @@ const fetchMem = new Map<string, unknown>();
 export async function fetchStaticJson<T>(url: string): Promise<T> {
   const hit = fetchMem.get(url);
   if (hit !== undefined) return hit as T;
+  if (typeof window === "undefined") {
+    try {
+      const fs = await import("fs/promises");
+      const path = await import("path");
+      const cleanUrl = url.startsWith("/") ? url.slice(1) : url;
+      const filePath = path.join(process.cwd(), "public", cleanUrl);
+      const content = await fs.readFile(filePath, "utf-8");
+      const data = JSON.parse(content) as T;
+      fetchMem.set(url, data);
+      return data;
+    } catch {
+      // Fallback to fetch if filesystem read fails
+    }
+  }
   const res = await fetch(url);
   if (!res.ok) throw new Error(`GET ${url} failed: ${res.status}`);
   const data = (await res.json()) as T;
