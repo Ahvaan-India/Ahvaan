@@ -52,7 +52,7 @@ export async function POST(req: Request) {
         }))
     : [];
   try {
-    const snapshot = await zoneSnapshot(ulid);
+    const snapshot = await zoneSnapshot(ulid, message);
     const contextNote = `Trusted AHVAAN zone data:\n${JSON.stringify(snapshot)}`;
     const answer = await callCloudflare([
       { role: "system", content: ASSISTANT_SYSTEM_PROMPT },
