@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { getForecastByDate, getForecastWithAnalysis, type Db } from "@/lib/db/queries";
+import { getForecastByDate, getForecastDates, getForecastWithAnalysis, type Db } from "@/lib/db/queries";
 import { getDb } from "@/lib/db/index";
 import type { AnalysisHour, ForecastHour } from "@/lib/db/schema";
 import { REDIS_TTL, redisKeys, withMemoryCache, withRedisCache } from "@/lib/redis";
+import { resolveForecastDate } from "@/lib/dates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -119,9 +120,11 @@ async function buildField(
   // Analysis layers follow the linked flow: forecast rows fetched WITH
   // their `analyses` relation (unique_location_id → forecast → analysis).
   // Weather layers read forecast rows directly. Both aggregate to zone means.
+  const availableDates = await getForecastDates(db);
+  const dbDate = resolveForecastDate(date, availableDates);
   let rows: Array<{ uniqueLocationId: string; hours: HourLike[] }>;
   if (layer in ANALYSIS_KEYS) {
-    const frows = await getForecastWithAnalysis({ date }, db);
+    const frows = await getForecastWithAnalysis({ date: dbDate }, db);
     rows = frows.flatMap((r) =>
       (r.analyses ?? []).map((a) => ({
         uniqueLocationId: r.uniqueLocationId,
@@ -129,7 +132,7 @@ async function buildField(
       })),
     );
   } else {
-    rows = (await getForecastByDate(date, db)).map((r) => ({
+    rows = (await getForecastByDate(dbDate, db)).map((r) => ({
       uniqueLocationId: r.uniqueLocationId,
       hours: (r.hourlyForecast ?? []) as HourLike[],
     }));

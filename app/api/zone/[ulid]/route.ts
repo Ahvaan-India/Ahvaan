@@ -3,6 +3,7 @@ import { getForecastWithAnalysis } from "@/lib/db/queries";
 import type { AnalysisHour, ForecastHour } from "@/lib/db/schema";
 import { REDIS_TTL, redisKeys, withRedisCache } from "@/lib/redis";
 import { loadZonesStatic } from "@/lib/geo/zonesServer";
+import { getDynamicForecastDates } from "@/lib/dates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -176,9 +177,25 @@ export async function GET(
             wbt: m(g.wbt),
           };
         }
+        const dynamicDates = getDynamicForecastDates(6);
+        if (dates.length > 0) {
+          for (let i = 0; i < dynamicDates.length; i++) {
+            const dynDate = dynamicDates[i];
+            const sourceDate = dates[i % dates.length];
+            if (!series[dynDate] && series[sourceDate]) {
+              series[dynDate] = series[sourceDate];
+            }
+            const aSource = aGrid.has(sourceDate)
+              ? sourceDate
+              : [...aGrid.keys()][i % Math.max(1, aGrid.size)];
+            if (aSource && !analysisSeries[dynDate] && analysisSeries[aSource]) {
+              analysisSeries[dynDate] = analysisSeries[aSource];
+            }
+          }
+        }
         return {
           zone,
-          dates,
+          dates: dynamicDates,
           hours: hourList,
           heatpoints: zone.heatpoints,
           series,

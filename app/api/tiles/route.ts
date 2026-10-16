@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { getForecastByDate, getForecastWithAnalysis, type Db } from "@/lib/db/queries";
+import { getForecastByDate, getForecastDates, getForecastWithAnalysis, type Db } from "@/lib/db/queries";
 import { getDb } from "@/lib/db/index";
 import type { AnalysisHour, ForecastHour } from "@/lib/db/schema";
 import { REDIS_TTL, redisKeys, withMemoryCache, withRedisCache } from "@/lib/redis";
 import { loadZonesStatic } from "@/lib/geo/zonesServer";
+import { resolveForecastDate } from "@/lib/dates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -102,6 +103,8 @@ export async function GET(req: Request) {
 }
 
 async function buildTiles(date: string, layer: string, db: Db) {
+  const availableDates = await getForecastDates(db);
+  const dbDate = resolveForecastDate(date, availableDates);
   const tiles: Record<string, Array<number | null>> = {};
   const hourSet = new Set<string>();
 
@@ -110,7 +113,7 @@ async function buildTiles(date: string, layer: string, db: Db) {
     const vulnByUlid = new Map(
       (zonesFile?.zones ?? []).map((z) => [z.ulid, z.vulnerability]),
     );
-    const frows = await getForecastByDate(date, db);
+    const frows = await getForecastByDate(dbDate, db);
     for (const r of frows) {
       const v = vulnByUlid.get(r.uniqueLocationId) ?? null;
       tiles[r.heatPointId] = new Array(24).fill(
@@ -120,7 +123,7 @@ async function buildTiles(date: string, layer: string, db: Db) {
     }
   } else if (layer in ANALYSIS_KEYS) {
     const extract = ANALYSIS_KEYS[layer];
-    const frows = await getForecastWithAnalysis({ date }, db);
+    const frows = await getForecastWithAnalysis({ date: dbDate }, db);
     for (const r of frows) {
       const a = (r.analyses ?? [])[0];
       const hours = ((a?.hourlyData ?? []) as HourLike[]).slice(0, 24);
@@ -133,7 +136,7 @@ async function buildTiles(date: string, layer: string, db: Db) {
     }
   } else {
     const extract = WEATHER_KEYS[layer];
-    const frows = await getForecastByDate(date, db);
+    const frows = await getForecastByDate(dbDate, db);
     for (const r of frows) {
       const hours = ((r.hourlyForecast ?? []) as HourLike[]).slice(0, 24);
       tiles[r.heatPointId] = hours.map((h) => {

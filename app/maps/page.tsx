@@ -82,6 +82,7 @@ import {
   type ZonesManifest,
 } from "@/lib/geo/zones";
 import { useWard } from "@/lib/wardContext";
+import { getDynamicForecastDates } from "@/lib/dates";
 
 const jsonFetch = (u: string) =>
   fetch(u).then((r) => {
@@ -371,7 +372,19 @@ function ZoneDetailBody({
   onToggleExpand?: () => void;
 }) {
   const [showAdvisories, setShowAdvisories] = useState(false);
-  const series = detail?.series?.[date ?? ""] ?? null;
+  const series = useMemo(() => {
+    if (!detail?.series) return null;
+    if (date && detail.series[date]) return detail.series[date];
+    const sKeys = Object.keys(detail.series).sort();
+    if (!sKeys.length) return null;
+    if (date && dates.includes(date)) {
+      const idx = dates.indexOf(date);
+      const fallbackKey = sKeys[idx % sKeys.length];
+      return detail.series[fallbackKey] ?? null;
+    }
+    return detail.series[sKeys[0]] ?? null;
+  }, [detail, date, dates]);
+
   const hourly = useMemo(() => {
     if (!series) return [];
     return (hours.length ? hours : Array.from({ length: 24 }, (_, i) => `${String(i).padStart(2, "0")}:00`)).map(
@@ -385,12 +398,18 @@ function ZoneDetailBody({
       }),
     );
   }, [series, hours]);
+
   const analysisDateKey = useMemo(() => {
     if (!detail?.analysisSeries) return null;
     if (date && detail.analysisSeries[date]) return date;
     const avail = Object.keys(detail.analysisSeries).sort();
-    return avail.length ? avail[avail.length - 1] : null;
-  }, [detail, date]);
+    if (!avail.length) return null;
+    if (date && dates.includes(date)) {
+      const idx = dates.indexOf(date);
+      return avail[idx % avail.length] ?? avail[0];
+    }
+    return avail[avail.length - 1];
+  }, [detail, date, dates]);
 
   const idxDay = analysisDateKey ? (detail?.analysisSeries?.[analysisDateKey] ?? null) : null;
   const idxHourly = useMemo(() => {
@@ -561,9 +580,14 @@ function ZoneDetailBody({
             <button
               key={d}
               onClick={() => onDateChange(d)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold tabular-nums ${d === activeDate ? "bg-red-600 text-white" : "border border-border bg-card hover:bg-muted"}`}
+              title={d}
+              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold tabular-nums transition-all ${
+                d === activeDate
+                  ? "bg-red-600 text-white shadow-xs"
+                  : "border border-border bg-card hover:bg-muted text-foreground"
+              }`}
             >
-              {i === 0 ? "Today" : d.slice(5)}
+              {i === 0 ? `Today (${d.slice(5)})` : d.slice(5)}
             </button>
           ))}
         </div>
@@ -935,37 +959,34 @@ export default function MapsPage() {
     () => (zonesFile as any)?.zones ?? [],
     [zonesFile],
   );
+  const dynamicFallbackDates = useMemo(() => getDynamicForecastDates(6), []);
   const dates: string[] = useMemo(
-    () => (datesResp as any)?.dates ?? (manifest as any)?.dates ?? [],
-    [datesResp, manifest],
+    () => {
+      const d = (datesResp as any)?.dates;
+      if (Array.isArray(d) && d.length > 0) return d;
+      return dynamicFallbackDates;
+    },
+    [datesResp, dynamicFallbackDates],
   );
   const analysisDates: string[] = useMemo(
-    () => (datesResp as any)?.analysisDates ?? [],
-    [datesResp],
+    () => {
+      const a = (datesResp as any)?.analysisDates;
+      if (Array.isArray(a) && a.length > 0) return a;
+      return dates;
+    },
+    [datesResp, dates],
   );
   // Effective date: explicit pick when chosen, otherwise default to TODAY
-  // if available in pool, or the closest date to today (e.g. when forecast extends 5 days out).
+  // if available in pool, or the first date in pool.
   const activeDate = useMemo(() => {
-    const pool = ANALYSIS_LAYERS.has(layer) ? analysisDates : dates;
+    const pool = ANALYSIS_LAYERS.has(layer) ? (analysisDates.length ? analysisDates : dates) : dates;
     if (date !== null && pool.includes(date)) return date;
-    if (pool.length === 0) return dates[dates.length - 1] ?? null;
+    if (pool.length === 0) return dates[0] ?? dynamicFallbackDates[0] ?? null;
 
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const todayStr = dates[0] ?? dynamicFallbackDates[0];
     if (pool.includes(todayStr)) return todayStr;
-
-    const todayTime = new Date(todayStr).getTime();
-    let closest = pool[0];
-    let minDiff = Math.abs(new Date(closest).getTime() - todayTime);
-    for (let i = 1; i < pool.length; i++) {
-      const diff = Math.abs(new Date(pool[i]).getTime() - todayTime);
-      if (diff < minDiff) {
-        minDiff = diff;
-        closest = pool[i];
-      }
-    }
-    return closest ?? pool[pool.length - 1] ?? null;
-  }, [date, dates, analysisDates, layer]);
+    return pool[0] ?? null;
+  }, [date, dates, analysisDates, layer, dynamicFallbackDates]);
 
   // Zone alert subscriptions.
   const { data: subsResp, mutate: mutateSubs } = useSWR(
