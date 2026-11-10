@@ -16,6 +16,7 @@ export const metadata: Metadata = {
 
 import { WardProvider } from "@/lib/wardContext";
 import { NavProvider } from "@/lib/navContext";
+import { Analytics } from "@vercel/analytics/next";
 
 export default function RootLayout({
   children,
@@ -35,6 +36,7 @@ export default function RootLayout({
         <WardProvider>
           <NavProvider>{children}</NavProvider>
         </WardProvider>
+        <Analytics />
       </body>
     </html>
   );
